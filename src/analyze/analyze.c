@@ -26,6 +26,7 @@
 #include "copy.h"
 #include "def.h"
 #include "exit-status.h"
+#include "extract-word.h"
 #include "fd-util.h"
 #include "fileio.h"
 #include "format-table.h"
@@ -79,6 +80,7 @@ static enum dot {
 } arg_dot = DEP_ALL;
 static char **arg_dot_from_patterns = NULL;
 static char **arg_dot_to_patterns = NULL;
+static char **arg_aliases = NULL;
 static usec_t arg_fuzz = 0;
 static PagerFlags arg_pager_flags = 0;
 static BusTransport arg_transport = BUS_TRANSPORT_LOCAL;
@@ -92,6 +94,7 @@ static usec_t arg_base_time = USEC_INFINITY;
 
 STATIC_DESTRUCTOR_REGISTER(arg_dot_from_patterns, strv_freep);
 STATIC_DESTRUCTOR_REGISTER(arg_dot_to_patterns, strv_freep);
+STATIC_DESTRUCTOR_REGISTER(arg_aliases, strv_freep);
 
 typedef struct BootTimes {
         usec_t firmware_time;
@@ -2145,7 +2148,25 @@ static int do_condition(int argc, char *argv[], void *userdata) {
 }
 
 static int do_verify(int argc, char *argv[], void *userdata) {
-        return verify_units(strv_skip(argv, 1), arg_scope, arg_man, arg_generators);
+        int r, u;
+        char **filenames, **filename;
+
+        if (arg_aliases)
+                filenames = arg_aliases;
+        else
+                filenames = strv_skip(argv, 1);
+
+        r = verify_units(filenames, arg_scope, arg_man, arg_generators);
+        /*
+        STRV_FOREACH(filename, filenames)
+                if (is_symlink(*filename)) {
+                        u = unlink(*filename);
+                        if (u < 0)
+                                return log_error_errno(u, "Couldn't unlink %s", *filename);
+                }
+        */
+
+        return r;
 }
 
 static int do_security(int argc, char *argv[], void *userdata) {
@@ -2246,6 +2267,7 @@ static int parse_argv(int argc, char *argv[]) {
                 ARG_GENERATORS,
                 ARG_ITERATIONS,
                 ARG_BASE_TIME,
+                ARG_ALIASES,
         };
 
         static const struct option options[] = {
@@ -2267,6 +2289,7 @@ static int parse_argv(int argc, char *argv[]) {
                 { "machine",      required_argument, NULL, 'M'                  },
                 { "iterations",   required_argument, NULL, ARG_ITERATIONS       },
                 { "base-time",    required_argument, NULL, ARG_BASE_TIME        },
+                { "aliases",      required_argument, NULL, ARG_ALIASES          },
                 {}
         };
 
@@ -2363,6 +2386,46 @@ static int parse_argv(int argc, char *argv[]) {
                         r = parse_timestamp(optarg, &arg_base_time);
                         if (r < 0)
                                 return log_error_errno(r, "Failed to parse --base-time= parameter: %s", optarg);
+
+                        break;
+
+                case ARG_ALIASES: ;
+                        int i, count = 1;
+                        char *w, *new_path;
+
+                        if (streq(strstrip(optarg), ""))
+                                break;
+
+                        for (i = 0; optarg[i]; i++)
+                                count += (optarg[i] == ',');
+                        if (count != (argc - 3))
+                                return log_error_errno(SYNTHETIC_ERRNO(EINVAL),
+                                                       "invalid --aliases parameter list length");
+                        arg_aliases = malloc(sizeof(char *) * (argc - 2));
+
+                        for (i = 0; i < argc - 3; i++) {
+                                r = extract_first_word((const char **)&optarg, &w, ",",
+                                                       EXTRACT_DONT_COALESCE_SEPARATORS);
+                                if (r < 0)
+                                        return log_error_errno(r, "Failed to parse --aliases= parameter: %s",
+                                                               optarg);
+
+                                w = strstrip(w);
+                                if (!streq(w, "")) {
+                                        new_path = path_join("/tmp", w);
+                                        r = symlink(argv[i + 2], new_path);
+                                        if (r < 0)
+                                                return log_error_errno(r, "Couldn't create symlink %s %s %s",
+                                                                       argv[i+2],
+                                                                       new_path,
+                                                                       special_glyph(SPECIAL_GLYPH_ARROW));
+                                        strv_push(&arg_aliases, new_path);
+                                }
+                                else { /* allow user to skip aliasing certain files */
+                                        strv_push(&arg_aliases, strdup(argv[i + 2]));
+                                        free(w);
+                                }
+                        }
 
                         break;
 
