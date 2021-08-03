@@ -29,15 +29,15 @@ systemd-run -p LoadCredential=passwd:/etc/passwd \
 
 # Check directory-based loading
 mkdir /tmp/ts54-creds
-echo -n wuff >/tmp/ts54-creds/dog
-echo -n meow >/tmp/ts54-creds/cat
-echo -n buzz >/tmp/ts54-creds/bee
+echo -n a >/tmp/ts54-creds/foo
+echo -n b >/tmp/ts54-creds/bar
+echo -n c >/tmp/ts54-creds/baz
 systemd-run -p LoadCredential=cred:/tmp/ts54-creds \
             -p DynamicUser=1 \
             --wait \
             --pipe \
-            cat '${CREDENTIALS_DIRECTORY}/creds_dog' '${CREDENTIALS_DIRECTORY}/creds_cat' '${CREDENTIALS_DIRECTORY}/creds_bee' >/tmp/ts54-concat
-( echo -n wuff meow buzz ) | cmp /tmp/ts54-concat
+            cat '${CREDENTIALS_DIRECTORY}/cred_foo' '${CREDENTIALS_DIRECTORY}/cred_bar' '${CREDENTIALS_DIRECTORY}/cred_baz' >/tmp/ts54-concat
+( echo -n abc ) | cmp /tmp/ts54-concat
 rm /tmp/ts54-concat
 rm -rf /tmp/ts54-creds
 

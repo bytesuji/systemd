@@ -2480,14 +2480,6 @@ static int write_credential(
         _cleanup_close_ int fd = -1;
         int r;
 
-        /*
-        char *filebuf = malloc(200);
-        char *fdc = malloc(5);
-        sprintf(fdc, "%d", dfd);
-        readlink(path_join("/proc/self/fd", fdc), filebuf, 200);
-        log_warning("writing in directory %s", filebuf);
-        */
-
         r = tempfn_random_child("", "cred", &tmp);
         if (r < 0)
                 return r;
@@ -2547,7 +2539,7 @@ static int load_credential(
         assert(dfd);
 
         ReadFullFileFlags flags = READ_FULL_FILE_SECURE|READ_FULL_FILE_FAIL_WHEN_LARGER;
-        /* _cleanup_(erase_and_freep) */ char *data = NULL;
+        _cleanup_(erase_and_freep) char *data = NULL;
         _cleanup_free_ char *j = NULL, *bindname = NULL;
         bool missing_ok = true;
         const char *source;
@@ -2566,7 +2558,7 @@ static int load_credential(
 
                 missing_ok = false;
 
-        } else if (params->received_credentials) { // TODO test params in recursive load
+        } else if (params->received_credentials) {
                 /* If this is a relative path, take it relative to the credentials we received
                  * ourselves. We don't support the AF_UNIX stuff in this mode, since we are operating
                  * on a credential store, i.e. this is guaranteed to be regular files. */
@@ -2579,10 +2571,6 @@ static int load_credential(
                 source = NULL;
 
         if (source) {
-                log_warning("process credential %s at path %s",
-                            lc->id,
-                            lc->path);
-
                 if (is_dir(source, true)) {
                         _cleanup_closedir_ DIR *d = NULL;
                         struct dirent *dent;
@@ -2592,7 +2580,7 @@ static int load_credential(
                                 return log_error_errno(errno, "Failed to open directory %s: %m", source);
 
                         FOREACH_DIRENT(dent, d, return -errno) {
-                                /* _cleanup_(exec_load_credential_freep) */ ExecLoadCredential *sub_lc = NULL;
+                                _cleanup_(exec_load_credential_freep) ExecLoadCredential *sub_lc = NULL;
                                 _cleanup_free_ char *new_path = NULL;
                                 struct stat st;
 
@@ -2617,7 +2605,7 @@ static int load_credential(
 
                                 *sub_lc = (ExecLoadCredential) {
                                         .id = strjoin(lc->id, "_", dent->d_name),
-                                        .path = new_path,
+                                        .path = TAKE_PTR(new_path),
                                         .encrypted = lc->encrypted,
                                 };
 
@@ -2697,7 +2685,6 @@ static int acquire_credentials(
         assert(context);
         assert(p);
 
-        log_warning("opening dfd at %s", p);
         dfd = open(p, O_DIRECTORY|O_CLOEXEC);
         if (dfd < 0)
                 return -errno;
@@ -2894,21 +2881,11 @@ static int setup_credentials_internal(
 
                 /* And mount it to the final place, read-only */
                 if (final_mounted)
-                {
-                        log_warning("final_mounted branch");
                         r = umount_verbose(LOG_DEBUG, workspace, MNT_DETACH|UMOUNT_NOFOLLOW);
-                }
                 else
-                {
-                        log_warning("else mount_nofollow_verbose");
-                        log_warning("final is %s", final);
                         r = mount_nofollow_verbose(LOG_DEBUG, workspace, final, NULL, MS_MOVE, NULL);
-                }
                 if (r < 0)
-                {
-                        log_warning("return negative");
                         return r;
-                }
         } else {
                 _cleanup_free_ char *parent = NULL;
 
@@ -2951,10 +2928,8 @@ static int setup_credentials(
                 return -ENOMEM;
 
         r = mkdir_label(q, 0755); /* top-level dir: world readable/searchable */
-        if (r < 0 && r != -EEXIST) {
-                log_warning("2932");
+        if (r < 0 && r != -EEXIST)
                 return r;
-        }
 
         p = path_join(q, unit);
         if (!p)
@@ -2969,10 +2944,8 @@ static int setup_credentials(
                 _cleanup_free_ char *t = NULL, *u = NULL;
 
                 /* If this is not a privilege or support issue then propagate the error */
-                if (!ERRNO_IS_NOT_SUPPORTED(r) && !ERRNO_IS_PRIVILEGE(r)) {
-                        log_warning("2948");
+                if (!ERRNO_IS_NOT_SUPPORTED(r) && !ERRNO_IS_PRIVILEGE(r))
                         return r;
-                }
 
                 /* Temporary workspace, that remains inaccessible all the time. We prepare stuff there before moving
                  * it into place, so that users can't access half-initialized credential stores. */
@@ -2989,10 +2962,8 @@ static int setup_credentials(
 
                 FOREACH_STRING(i, t, u) {
                         r = mkdir_label(i, 0700);
-                        if (r < 0 && r != -EEXIST) {
-                                log_warning("2968");
+                        if (r < 0 && r != -EEXIST)
                                 return r;
-                        }
                 }
 
                 r = setup_credentials_internal(
@@ -3007,10 +2978,8 @@ static int setup_credentials(
 
                 (void) rmdir(u); /* remove the workspace again if we can. */
 
-                if (r < 0) {
-                        log_warning("2986");
+                if (r < 0)
                         return r;
-                }
 
         } else if (r == 0) {
 
@@ -3050,7 +3019,6 @@ static int setup_credentials(
                 _exit(EXIT_SUCCESS);
 
         child_fail:
-                log_warning("3026");
                 _exit(EXIT_FAILURE);
         }
 
