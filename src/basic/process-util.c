@@ -1309,10 +1309,14 @@ int safe_fork_full(
                         }
 
                         r = wait_for_terminate_and_check(name, pid, (flags & FORK_LOG ? WAIT_LOG : 0));
-                        if (r < 0)
+                        if (r < 0) {
+                                log_warning("1313 r is %d at EPROTO", r);
                                 return r;
-                        if (r != EXIT_SUCCESS) /* exit status > 0 should be treated as failure, too */
+                        }
+                        if (r != EXIT_SUCCESS) { /* exit status > 0 should be treated as failure, too */
+                                log_warning("1317 r is %d at EPROTO", r);
                                 return -EPROTO;
+                        }
                 }
 
                 if (ret_pid)

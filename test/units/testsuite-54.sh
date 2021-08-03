@@ -27,8 +27,21 @@ systemd-run -p LoadCredential=passwd:/etc/passwd \
             rm '${CREDENTIALS_DIRECTORY}/passwd' \
     && { echo 'unexpected success'; exit 1; }
 
-# Now test encrypted credentials (only supported when built with OpenSSL though)
+# Check directory-based loading
+mkdir /tmp/ts54-creds
+echo -n wuff >/tmp/ts54-creds/dog
+echo -n meow >/tmp/ts54-creds/cat
+echo -n buzz >/tmp/ts54-creds/bee
+systemd-run -p LoadCredential=cred:/tmp/ts54-creds \
+            -p DynamicUser=1 \
+            --wait \
+            --pipe \
+            cat '${CREDENTIALS_DIRECTORY}/creds_dog' '${CREDENTIALS_DIRECTORY}/creds_cat' '${CREDENTIALS_DIRECTORY}/creds_bee' >/tmp/ts54-concat
+( echo -n wuff meow buzz ) | cmp /tmp/ts54-concat
+rm /tmp/ts54-concat
+rm -rf /tmp/ts54-creds
 
+# Now test encrypted credentials (only supported when built with OpenSSL though)
 if systemctl --version | grep -q -- +OPENSSL ; then
     echo -n $RANDOM >/tmp/test-54-plaintext
     systemd-creds encrypt --name=test-54 /tmp/test-54-plaintext /tmp/test-54-ciphertext

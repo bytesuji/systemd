@@ -2862,7 +2862,8 @@ StandardInputData=SWNrIHNpdHplIGRhIHVuJyBlc3NlIEtsb3BzLAp1ZmYgZWVtYWwga2xvcHAncy
         from the service manager into a service. This option may be used multiple times, each time defining
         an additional credential to pass to the unit. Alternatively, if the path is a directory, every file
         in that directory will be loaded as a separate credential. The ID for each credential will be the
-        provided ID suffixed with <literal>_$FILENAME</literal> (e.g., <literal>Key_file1</literal>).</para>
+        provided ID suffixed with <literal>_$FILENAME</literal> (e.g., <literal>Key_file1</literal>). When
+        loading from a directory, symlinks will be ignored.</para>
 
         <para>The <varname>LoadCredentialEncrypted=</varname> setting is identical to
         <varname>LoadCredential=</varname>, except that the credential data is decrypted before being passed
