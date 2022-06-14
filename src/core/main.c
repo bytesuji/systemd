@@ -51,6 +51,7 @@
 #include "hexdecoct.h"
 #include "hostname-setup.h"
 #include "ima-setup.h"
+#include "import-creds.h"
 #include "killall.h"
 #include "kmod-setup.h"
 #include "limits-util.h"
@@ -1289,12 +1290,12 @@ static void test_usr(void) {
 
         /* Check that /usr is either on the same file system as / or mounted already. */
 
-        if (dir_is_empty("/usr") <= 0)
+        if (dir_is_empty("/usr", /* ignore_hidden_or_backup= */ false) <= 0)
                 return;
 
         log_warning("/usr appears to be on its own filesystem and is not already mounted. This is not a supported setup. "
                     "Some things will probably break (sometimes even silently) in mysterious ways. "
-                    "Consult http://freedesktop.org/wiki/Software/systemd/separate-usr-is-broken for more information.");
+                    "Consult https://www.freedesktop.org/wiki/Software/systemd/separate-usr-is-broken for more information.");
 }
 
 static int enforce_syscall_archs(Set *archs) {
@@ -2051,7 +2052,7 @@ static void log_execution_mode(bool *ret_first_boot) {
                         }
                 }
 
-                assert(uname(&uts) >= 0);
+                assert_se(uname(&uts) >= 0);
 
                 if (strverscmp_improved(uts.release, KERNEL_BASELINE_VERSION) < 0)
                         log_warning("Warning! Reported kernel version %s is older than systemd's required baseline kernel version %s. "
@@ -2179,6 +2180,10 @@ static int initialize_runtime(
         /* Bump up RLIMIT_NOFILE for systemd itself */
         (void) bump_rlimit_nofile(saved_rlimit_nofile);
         (void) bump_rlimit_memlock(saved_rlimit_memlock);
+
+        /* Pull credentials from various sources into a common credential directory */
+        if (arg_system && !skip_setup)
+                (void) import_credentials();
 
         return 0;
 }
@@ -2779,7 +2784,7 @@ int main(int argc, char *argv[]) {
 
                 /* Load the kernel modules early. */
                 if (!skip_setup)
-                        kmod_setup();
+                        (void) kmod_setup();
 
                 /* Mount /proc, /sys and friends, so that /proc/cmdline and /proc/$PID/fd is available. */
                 r = mount_setup(loaded_policy, skip_setup);

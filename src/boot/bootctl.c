@@ -16,6 +16,7 @@
 #include "blkid-util.h"
 #include "bootspec.h"
 #include "copy.h"
+#include "devnum-util.h"
 #include "dirent-util.h"
 #include "efi-api.h"
 #include "efi-loader.h"
@@ -46,6 +47,7 @@
 #include "terminal-util.h"
 #include "tmpfile-util.h"
 #include "tmpfile-util-label.h"
+#include "tpm2-util.h"
 #include "umask-util.h"
 #include "utf8.h"
 #include "util.h"
@@ -59,6 +61,7 @@ static bool arg_print_dollar_boot_path = false;
 static bool arg_touch_variables = true;
 static PagerFlags arg_pager_flags = 0;
 static bool arg_graceful = false;
+static bool arg_quiet = false;
 static int arg_make_entry_directory = false; /* tri-state: < 0 for automatic logic */
 static sd_id128_t arg_machine_id = SD_ID128_NULL;
 static char *arg_install_layout = NULL;
@@ -71,6 +74,7 @@ static enum {
 } arg_entry_token_type = ARG_ENTRY_TOKEN_AUTO;
 static char *arg_entry_token = NULL;
 static JsonFormatFlags arg_json_format_flags = JSON_FORMAT_OFF;
+static bool arg_arch_all = false;
 
 STATIC_DESTRUCTOR_REGISTER(arg_esp_path, freep);
 STATIC_DESTRUCTOR_REGISTER(arg_xbootldr_path, freep);
@@ -103,7 +107,8 @@ static int acquire_esp(
         r = find_esp_and_warn(arg_esp_path, unprivileged_mode, &np, ret_part, ret_pstart, ret_psize, ret_uuid, ret_devid);
         if (r == -ENOKEY) {
                 if (graceful)
-                        return log_info_errno(r, "Couldn't find EFI system partition, skipping.");
+                        return log_full_errno(arg_quiet ? LOG_DEBUG : LOG_INFO, r,
+                                              "Couldn't find EFI system partition, skipping.");
 
                 return log_error_errno(r,
                                        "Couldn't find EFI system partition. It is recommended to mount it to /boot or /efi.\n"
@@ -176,7 +181,9 @@ static int load_etc_machine_info(void) {
                 return log_error_errno(r, "Failed to parse /etc/machine-info: %m");
 
         if (!isempty(s)) {
-                log_notice("Read $KERNEL_INSTALL_MACHINE_ID from /etc/machine-info. Please move it to /etc/kernel/entry-token.");
+                if (!arg_quiet)
+                        log_notice("Read $KERNEL_INSTALL_MACHINE_ID from /etc/machine-info. "
+                                   "Please move it to /etc/kernel/entry-token.");
 
                 r = sd_id128_from_string(s, &arg_machine_id);
                 if (r < 0)
@@ -187,7 +194,9 @@ static int load_etc_machine_info(void) {
         }
 
         if (!isempty(layout)) {
-                log_notice("Read $KERNEL_INSTALL_LAYOUT from /etc/machine-info. Please move it to the layout= setting of /etc/kernel/install.conf.");
+                if (!arg_quiet)
+                        log_notice("Read $KERNEL_INSTALL_LAYOUT from /etc/machine-info. "
+                                   "Please move it to the layout= setting of /etc/kernel/install.conf.");
 
                 log_debug("KERNEL_INSTALL_LAYOUT=%s is specified in /etc/machine-info.", layout);
                 free_and_replace(arg_install_layout, layout);
@@ -405,6 +414,36 @@ finish:
         return r;
 }
 
+static const char *get_efi_arch(void) {
+        /* Detect EFI firmware architecture of the running system. On mixed mode systems, it could be 32bit
+         * while the kernel is running in 64bit. */
+
+#ifdef __x86_64__
+        _cleanup_free_ char *platform_size = NULL;
+        int r;
+
+        r = read_one_line_file("/sys/firmware/efi/fw_platform_size", &platform_size);
+        if (r == -ENOENT)
+                return EFI_MACHINE_TYPE_NAME;
+        if (r < 0) {
+                log_warning_errno(r, "Error reading EFI firmware word size, assuming '%u': %m", __WORDSIZE);
+                return EFI_MACHINE_TYPE_NAME;
+        }
+
+        if (streq(platform_size, "64"))
+                return EFI_MACHINE_TYPE_NAME;
+        if (streq(platform_size, "32"))
+                return "ia32";
+
+        log_warning(
+                "Unknown EFI firmware word size '%s', using default word size '%u' instead.",
+                platform_size,
+                __WORDSIZE);
+#endif
+
+        return EFI_MACHINE_TYPE_NAME;
+}
+
 static int enumerate_binaries(const char *esp_path, const char *path, const char *prefix) {
         _cleanup_closedir_ DIR *d = NULL;
         const char *p;
@@ -468,13 +507,13 @@ static int status_binaries(const char *esp_path, sd_id128_t partition) {
         r = enumerate_binaries(esp_path, "EFI/systemd", NULL);
         if (r < 0)
                 goto finish;
-        if (r == 0)
+        if (r == 0 && !arg_quiet)
                 log_info("systemd-boot not installed in ESP.");
 
         r = enumerate_binaries(esp_path, "EFI/BOOT", "boot");
         if (r < 0)
                 goto finish;
-        if (r == 0)
+        if (r == 0 && !arg_quiet)
                 log_info("No default/fallback boot loader installed in ESP.");
 
         r = 0;
@@ -550,39 +589,6 @@ static int status_variables(void) {
         return 0;
 }
 
-static int boot_entry_file_check(const char *root, const char *p) {
-        _cleanup_free_ char *path = NULL;
-
-        path = path_join(root, p);
-        if (!path)
-                return log_oom();
-
-        return RET_NERRNO(access(path, F_OK));
-}
-
-static void boot_entry_file_list(const char *field, const char *root, const char *p, int *ret_status) {
-        int status = boot_entry_file_check(root, p);
-
-        printf("%13s%s ", strempty(field), field ? ":" : " ");
-        if (status < 0) {
-                errno = -status;
-                printf("%s%s%s (%m)\n", ansi_highlight_red(), p, ansi_normal());
-        } else
-                printf("%s\n", p);
-
-        if (*ret_status == 0 && status < 0)
-                *ret_status = status;
-}
-
-static const char* const boot_entry_type_table[_BOOT_ENTRY_TYPE_MAX] = {
-        [BOOT_ENTRY_CONF]        = "Boot Loader Specification Type #1 (.conf)",
-        [BOOT_ENTRY_UNIFIED]     = "Boot Loader Specification Type #2 (.efi)",
-        [BOOT_ENTRY_LOADER]      = "Reported by Boot Loader",
-        [BOOT_ENTRY_LOADER_AUTO] = "Automatic",
-};
-
-DEFINE_PRIVATE_STRING_TABLE_LOOKUP_TO_STRING(boot_entry_type, BootEntryType);
-
 static int boot_config_load_and_select(
                 BootConfig *config,
                 const char *esp_path,
@@ -595,7 +601,7 @@ static int boot_config_load_and_select(
 
         /* If XBOOTLDR and ESP actually refer to the same block device, suppress XBOOTLDR, since it would
          * find the same entries twice. */
-        bool same = esp_path && xbootldr_path && devid_set_and_equal(esp_devid, xbootldr_devid);
+        bool same = esp_path && xbootldr_path && devnum_set_and_equal(esp_devid, xbootldr_devid);
 
         r = boot_config_load(config, esp_path, same ? NULL : xbootldr_path);
         if (r < 0)
@@ -610,104 +616,6 @@ static int boot_config_load_and_select(
                 (void) boot_config_augment_from_loader(config, efi_entries, /* only_auto= */ false);
 
         return boot_config_select_special_entries(config);
-}
-
-static int boot_entry_show(
-                const BootEntry *e,
-                bool show_as_default,
-                bool show_as_selected,
-                bool show_reported) {
-
-        int status = 0;
-
-        /* Returns 0 on success, negative on processing error, and positive if something is wrong with the
-           boot entry itself. */
-
-        assert(e);
-
-        printf("         type: %s\n",
-               boot_entry_type_to_string(e->type));
-
-        printf("        title: %s%s%s",
-               ansi_highlight(), boot_entry_title(e), ansi_normal());
-
-        if (show_as_default)
-                printf(" %s(default)%s",
-                       ansi_highlight_green(), ansi_normal());
-
-        if (show_as_selected)
-                printf(" %s(selected)%s",
-                       ansi_highlight_magenta(), ansi_normal());
-
-        if (show_reported) {
-                if (e->type == BOOT_ENTRY_LOADER)
-                        printf(" %s(reported/absent)%s",
-                               ansi_highlight_red(), ansi_normal());
-                else if (!e->reported_by_loader && e->type != BOOT_ENTRY_LOADER_AUTO)
-                        printf(" %s(not reported/new)%s",
-                               ansi_highlight_green(), ansi_normal());
-        }
-
-        putchar('\n');
-
-        if (e->id)
-                printf("           id: %s\n", e->id);
-        if (e->path) {
-                _cleanup_free_ char *link = NULL;
-
-                /* Let's urlify the link to make it easy to view in an editor, but only if it is a text
-                 * file. Unified images are binary ELFs, and EFI variables are not pure text either. */
-                if (e->type == BOOT_ENTRY_CONF)
-                        (void) terminal_urlify_path(e->path, NULL, &link);
-
-                printf("       source: %s\n", link ?: e->path);
-        }
-        if (e->sort_key)
-                printf("     sort-key: %s\n", e->sort_key);
-        if (e->version)
-                printf("      version: %s\n", e->version);
-        if (e->machine_id)
-                printf("   machine-id: %s\n", e->machine_id);
-        if (e->architecture)
-                printf(" architecture: %s\n", e->architecture);
-        if (e->kernel)
-                boot_entry_file_list("linux", e->root, e->kernel, &status);
-
-        STRV_FOREACH(s, e->initrd)
-                boot_entry_file_list(s == e->initrd ? "initrd" : NULL,
-                                     e->root,
-                                     *s,
-                                     &status);
-
-        if (!strv_isempty(e->options)) {
-                _cleanup_free_ char *t = NULL, *t2 = NULL;
-                _cleanup_strv_free_ char **ts = NULL;
-
-                t = strv_join(e->options, " ");
-                if (!t)
-                        return log_oom();
-
-                ts = strv_split_newlines(t);
-                if (!ts)
-                        return log_oom();
-
-                t2 = strv_join(ts, "\n              ");
-                if (!t2)
-                        return log_oom();
-
-                printf("      options: %s\n", t2);
-        }
-
-        if (e->device_tree)
-                boot_entry_file_list("devicetree", e->root, e->device_tree, &status);
-
-        STRV_FOREACH(s, e->device_tree_overlay)
-                boot_entry_file_list(s == e->device_tree_overlay ? "devicetree-overlay" : NULL,
-                                     e->root,
-                                     *s,
-                                     &status);
-
-        return -status;
 }
 
 static int status_entries(
@@ -744,7 +652,7 @@ static int status_entries(
         else {
                 printf("Default Boot Loader Entry:\n");
 
-                r = boot_entry_show(
+                r = show_boot_entry(
                                 boot_config_default_entry(config),
                                 /* show_as_default= */ false,
                                 /* show_as_selected= */ false,
@@ -810,10 +718,13 @@ static int version_check(int fd_from, const char *from, int fd_to, const char *t
                                         to);
 
         r = compare_version(a, b);
+        log_debug("Comparing versions: \"%s\" %s \"%s", a, comparison_operator(r), b);
         if (r < 0)
-                return log_warning_errno(SYNTHETIC_ERRNO(ESTALE), "Skipping \"%s\", since newer boot loader version in place already.", to);
-        else if (r == 0)
-                return log_info_errno(SYNTHETIC_ERRNO(ESTALE), "Skipping \"%s\", since same boot loader version in place already.", to);
+                return log_warning_errno(SYNTHETIC_ERRNO(ESTALE),
+                                         "Skipping \"%s\", since newer boot loader version in place already.", to);
+        if (r == 0)
+                return log_info_errno(SYNTHETIC_ERRNO(ESTALE),
+                                      "Skipping \"%s\", since same boot loader version in place already.", to);
 
         return 0;
 }
@@ -952,7 +863,7 @@ static int copy_one_file(const char *esp_path, const char *name, bool force) {
         return r;
 }
 
-static int install_binaries(const char *esp_path, bool force) {
+static int install_binaries(const char *esp_path, const char *arch, bool force) {
         _cleanup_closedir_ DIR *d = NULL;
         int r = 0;
 
@@ -960,10 +871,13 @@ static int install_binaries(const char *esp_path, bool force) {
         if (!d)
                 return log_error_errno(errno, "Failed to open \""BOOTLIBDIR"\": %m");
 
+        const char *suffix = strjoina(arch, ".efi");
+        const char *suffix_signed = strjoina(arch, ".efi.signed");
+
         FOREACH_DIRENT(de, d, return log_error_errno(errno, "Failed to read \""BOOTLIBDIR"\": %m")) {
                 int k;
 
-                if (!endswith_no_case(de->d_name, ".efi") && !endswith_no_case(de->d_name, ".efi.signed"))
+                if (!endswith_no_case(de->d_name, suffix) && !endswith_no_case(de->d_name, suffix_signed))
                         continue;
 
                 /* skip the .efi file, if there's a .signed version of it */
@@ -1009,30 +923,29 @@ static bool same_entry(uint16_t id, sd_id128_t uuid, const char *path) {
 
 static int find_slot(sd_id128_t uuid, const char *path, uint16_t *id) {
         _cleanup_free_ uint16_t *options = NULL;
-        int n, i;
 
-        n = efi_get_boot_options(&options);
+        int n = efi_get_boot_options(&options);
         if (n < 0)
                 return n;
 
         /* find already existing systemd-boot entry */
-        for (i = 0; i < n; i++)
+        for (int i = 0; i < n; i++)
                 if (same_entry(options[i], uuid, path)) {
                         *id = options[i];
                         return 1;
                 }
 
         /* find free slot in the sorted BootXXXX variable list */
-        for (i = 0; i < n; i++)
+        for (int i = 0; i < n; i++)
                 if (i != options[i]) {
                         *id = i;
                         return 0;
                 }
 
         /* use the next one */
-        if (i == 0xffff)
+        if (n == 0xffff)
                 return -ENOSPC;
-        *id = i;
+        *id = n;
         return 0;
 }
 
@@ -1443,12 +1356,15 @@ static int help(int argc, char *argv[], void *userdata) {
                "     --no-pager        Do not pipe output into a pager\n"
                "     --graceful        Don't fail when the ESP cannot be found or EFI\n"
                "                       variables cannot be written\n"
+               "  -q --quiet           Suppress output\n"
                "     --make-entry-directory=yes|no|auto\n"
                "                       Create $BOOT/ENTRY-TOKEN/ directory\n"
                "     --entry-token=machine-id|os-id|os-image-id|auto|literal:…\n"
                "                       Entry token to use for this installation\n"
                "     --json=pretty|short|off\n"
                "                       Generate JSON output\n"
+               "     --all-architectures\n"
+               "                       Install all supported EFI architectures\n"
                "\nSee the %2$s for details.\n",
                program_invocation_short_name,
                link,
@@ -1471,6 +1387,7 @@ static int parse_argv(int argc, char *argv[]) {
                 ARG_MAKE_ENTRY_DIRECTORY,
                 ARG_ENTRY_TOKEN,
                 ARG_JSON,
+                ARG_ARCH_ALL,
         };
 
         static const struct option options[] = {
@@ -1485,10 +1402,12 @@ static int parse_argv(int argc, char *argv[]) {
                 { "no-variables",              no_argument,       NULL, ARG_NO_VARIABLES              },
                 { "no-pager",                  no_argument,       NULL, ARG_NO_PAGER                  },
                 { "graceful",                  no_argument,       NULL, ARG_GRACEFUL                  },
+                { "quiet",                     no_argument,       NULL, 'q'                           },
                 { "make-entry-directory",      required_argument, NULL, ARG_MAKE_ENTRY_DIRECTORY      },
                 { "make-machine-id-directory", required_argument, NULL, ARG_MAKE_ENTRY_DIRECTORY      }, /* Compatibility alias */
                 { "entry-token",               required_argument, NULL, ARG_ENTRY_TOKEN               },
                 { "json",                      required_argument, NULL, ARG_JSON                      },
+                { "all-architectures",         no_argument,       NULL, ARG_ARCH_ALL                  },
                 {}
         };
 
@@ -1546,6 +1465,10 @@ static int parse_argv(int argc, char *argv[]) {
                         arg_graceful = true;
                         break;
 
+                case 'q':
+                        arg_quiet = true;
+                        break;
+
                 case ARG_ENTRY_TOKEN: {
                         const char *e;
 
@@ -1587,7 +1510,10 @@ static int parse_argv(int argc, char *argv[]) {
                         r = parse_json_argument(optarg, &arg_json_format_flags);
                         if (r <= 0)
                                 return r;
+                        break;
 
+                case ARG_ARCH_ALL:
+                        arg_arch_all = true;
                         break;
 
                 case '?':
@@ -1637,7 +1563,7 @@ static int are_we_installed(const char *esp_path) {
                 return log_oom();
 
         log_debug("Checking whether %s contains any files…", p);
-        r = dir_is_empty(p);
+        r = dir_is_empty(p, /* ignore_hidden_or_backup= */ false);
         if (r < 0 && r != -ENOENT)
                 return log_error_errno(r, "Failed to check whether %s contains any files: %m", p);
 
@@ -1696,10 +1622,10 @@ static int verb_status(int argc, char *argv[], void *userdata) {
                         { EFI_LOADER_FEATURE_RANDOM_SEED,             "Support for passing random seed to OS" },
                         { EFI_LOADER_FEATURE_LOAD_DRIVER,             "Load drop-in drivers"                  },
                 };
-
                 _cleanup_free_ char *fw_type = NULL, *fw_info = NULL, *loader = NULL, *loader_path = NULL, *stub = NULL;
                 sd_id128_t loader_part_uuid = SD_ID128_NULL;
                 uint64_t loader_features = 0;
+                Tpm2Support s;
                 int have;
 
                 read_efi_var(EFI_LOADER_VARIABLE(LoaderFirmwareType), &fw_type);
@@ -1718,22 +1644,31 @@ static int verb_status(int argc, char *argv[], void *userdata) {
 
                 SecureBootMode secure = efi_get_secure_boot_mode();
                 printf("System:\n");
-                printf("     Firmware: %s%s (%s)%s\n", ansi_highlight(), strna(fw_type), strna(fw_info), ansi_normal());
-                printf("  Secure Boot: %sd (%s)\n",
+                printf("      Firmware: %s%s (%s)%s\n", ansi_highlight(), strna(fw_type), strna(fw_info), ansi_normal());
+                printf(" Firmware Arch: %s\n", get_efi_arch());
+                printf("   Secure Boot: %sd (%s)\n",
                        enable_disable(IN_SET(secure, SECURE_BOOT_USER, SECURE_BOOT_DEPLOYED)),
                        secure_boot_mode_to_string(secure));
-                printf(" TPM2 Support: %s\n", yes_no(efi_has_tpm2()));
+
+                s = tpm2_support();
+                printf("  TPM2 Support: %s%s%s\n",
+                       FLAGS_SET(s, TPM2_SUPPORT_FIRMWARE|TPM2_SUPPORT_DRIVER) ? ansi_highlight_green() :
+                       (s & (TPM2_SUPPORT_FIRMWARE|TPM2_SUPPORT_DRIVER)) != 0 ? ansi_highlight_red() : ansi_highlight_yellow(),
+                       FLAGS_SET(s, TPM2_SUPPORT_FIRMWARE|TPM2_SUPPORT_DRIVER) ? "yes" :
+                       (s & TPM2_SUPPORT_FIRMWARE) ? "firmware only, driver unavailable" :
+                       (s & TPM2_SUPPORT_DRIVER) ? "driver only, firmware unavailable" : "no",
+                       ansi_normal());
 
                 k = efi_get_reboot_to_firmware();
                 if (k > 0)
-                        printf(" Boot into FW: %sactive%s\n", ansi_highlight_yellow(), ansi_normal());
+                        printf("  Boot into FW: %sactive%s\n", ansi_highlight_yellow(), ansi_normal());
                 else if (k == 0)
-                        printf(" Boot into FW: supported\n");
+                        printf("  Boot into FW: supported\n");
                 else if (k == -EOPNOTSUPP)
-                        printf(" Boot into FW: not supported\n");
+                        printf("  Boot into FW: not supported\n");
                 else {
                         errno = -k;
-                        printf(" Boot into FW: %sfailed%s (%m)\n", ansi_highlight_red(), ansi_normal());
+                        printf("  Boot into FW: %sfailed%s (%m)\n", ansi_highlight_red(), ansi_normal());
                 }
                 printf("\n");
 
@@ -1839,65 +1774,13 @@ static int verb_list(int argc, char *argv[], void *userdata) {
         if (r < 0)
                 return r;
 
-        if (!FLAGS_SET(arg_json_format_flags, JSON_FORMAT_OFF)) {
-
-                pager_open(arg_pager_flags);
-
-                for (size_t i = 0; i < config.n_entries; i++) {
-                        _cleanup_free_ char *opts = NULL;
-                        BootEntry *e = config.entries + i;
-                        _cleanup_(json_variant_unrefp) JsonVariant *v = NULL;
-
-                        if (!strv_isempty(e->options)) {
-                                opts = strv_join(e->options, " ");
-                                if (!opts)
-                                        return log_oom();
-                        }
-
-                        r = json_build(&v, JSON_BUILD_OBJECT(
-                                                       JSON_BUILD_PAIR_CONDITION(e->id, "id", JSON_BUILD_STRING(e->id)),
-                                                       JSON_BUILD_PAIR_CONDITION(e->path, "path", JSON_BUILD_STRING(e->path)),
-                                                       JSON_BUILD_PAIR_CONDITION(e->root, "root", JSON_BUILD_STRING(e->root)),
-                                                       JSON_BUILD_PAIR_CONDITION(e->title, "title", JSON_BUILD_STRING(e->title)),
-                                                       JSON_BUILD_PAIR_CONDITION(boot_entry_title(e), "showTitle", JSON_BUILD_STRING(boot_entry_title(e))),
-                                                       JSON_BUILD_PAIR_CONDITION(e->sort_key, "sortKey", JSON_BUILD_STRING(e->sort_key)),
-                                                       JSON_BUILD_PAIR_CONDITION(e->version, "version", JSON_BUILD_STRING(e->version)),
-                                                       JSON_BUILD_PAIR_CONDITION(e->machine_id, "machineId", JSON_BUILD_STRING(e->machine_id)),
-                                                       JSON_BUILD_PAIR_CONDITION(e->architecture, "architecture", JSON_BUILD_STRING(e->architecture)),
-                                                       JSON_BUILD_PAIR_CONDITION(opts, "options", JSON_BUILD_STRING(opts)),
-                                                       JSON_BUILD_PAIR_CONDITION(e->kernel, "linux", JSON_BUILD_STRING(e->kernel)),
-                                                       JSON_BUILD_PAIR_CONDITION(e->efi, "efi", JSON_BUILD_STRING(e->efi)),
-                                                       JSON_BUILD_PAIR_CONDITION(!strv_isempty(e->initrd), "initrd", JSON_BUILD_STRV(e->initrd)),
-                                                       JSON_BUILD_PAIR_CONDITION(e->device_tree, "devicetree", JSON_BUILD_STRING(e->device_tree)),
-                                                       JSON_BUILD_PAIR_CONDITION(!strv_isempty(e->device_tree_overlay), "devicetreeOverlay", JSON_BUILD_STRV(e->device_tree_overlay))));
-                        if (r < 0)
-                                return log_oom();
-
-                        json_variant_dump(v, arg_json_format_flags, stdout, NULL);
-                }
-
-        } else if (config.n_entries == 0)
+        if (config.n_entries == 0 && FLAGS_SET(arg_json_format_flags, JSON_FORMAT_OFF)) {
                 log_info("No boot loader entries found.");
-        else {
-                pager_open(arg_pager_flags);
-
-                printf("Boot Loader Entries:\n");
-
-                for (size_t n = 0; n < config.n_entries; n++) {
-                        r = boot_entry_show(
-                                        config.entries + n,
-                                        /* show_as_default= */  n == (size_t) config.default_entry,
-                                        /* show_as_selected= */ n == (size_t) config.selected_entry,
-                                        /* show_discovered= */  true);
-                        if (r < 0)
-                                return r;
-
-                        if (n+1 < config.n_entries)
-                                putchar('\n');
-                }
+                return 0;
         }
 
-        return 0;
+        pager_open(arg_pager_flags);
+        return show_boot_entries(&config, arg_json_format_flags);
 }
 
 static int install_random_seed(const char *esp) {
@@ -1921,7 +1804,7 @@ static int install_random_seed(const char *esp) {
         if (!buffer)
                 return log_oom();
 
-        r = genuine_random_bytes(buffer, sz, RANDOM_BLOCK);
+        r = crypto_random_bytes(buffer, sz);
         if (r < 0)
                 return log_error_errno(r, "Failed to acquire random seed: %m");
 
@@ -2008,7 +1891,7 @@ static int install_random_seed(const char *esp) {
                 log_debug("Existing system token size (%zu) does not match our expectations (%zu), replacing.", token_size, sz);
         }
 
-        r = genuine_random_bytes(buffer, sz, RANDOM_BLOCK);
+        r = crypto_random_bytes(buffer, sz);
         if (r < 0)
                 return log_error_errno(r, "Failed to acquire random seed: %m");
 
@@ -2087,6 +1970,8 @@ static int verb_install(int argc, char *argv[], void *userdata) {
         if (r < 0)
                 return r;
 
+        const char *arch = arg_arch_all ? "" : get_efi_arch();
+
         RUN_WITH_UMASK(0002) {
                 if (install) {
                         /* Don't create any of these directories when we are just updating. When we update
@@ -2101,7 +1986,7 @@ static int verb_install(int argc, char *argv[], void *userdata) {
                                 return r;
                 }
 
-                r = install_binaries(arg_esp_path, install);
+                r = install_binaries(arg_esp_path, arch, install);
                 if (r < 0)
                         return r;
 
@@ -2130,13 +2015,16 @@ static int verb_install(int argc, char *argv[], void *userdata) {
 
         (void) sync_everything();
 
-        if (arg_touch_variables)
-                r = install_variables(arg_esp_path,
-                                      part, pstart, psize, uuid,
-                                      "/EFI/systemd/systemd-boot" EFI_MACHINE_TYPE_NAME ".efi",
-                                      install);
+        if (!arg_touch_variables)
+                return 0;
 
-        return r;
+        if (arg_arch_all) {
+                log_info("Not changing EFI variables with --all-architectures.");
+                return 0;
+        }
+
+        char *path = strjoina("/EFI/systemd/systemd-boot", arch, ".efi");
+        return install_variables(arg_esp_path, part, pstart, psize, uuid, path, install);
 }
 
 static int verb_remove(int argc, char *argv[], void *userdata) {
@@ -2202,7 +2090,13 @@ static int verb_remove(int argc, char *argv[], void *userdata) {
         if (!arg_touch_variables)
                 return r;
 
-        q = remove_variables(uuid, "/EFI/systemd/systemd-boot" EFI_MACHINE_TYPE_NAME ".efi", true);
+        if (arg_arch_all) {
+                log_info("Not changing EFI variables with --all-architectures.");
+                return r;
+        }
+
+        char *path = strjoina("/EFI/systemd/systemd-boot", get_efi_arch(), ".efi");
+        q = remove_variables(uuid, path, true);
         if (q < 0 && r >= 0)
                 r = q;
 
@@ -2216,7 +2110,9 @@ static int verb_remove(int argc, char *argv[], void *userdata) {
 static int verb_is_installed(int argc, char *argv[], void *userdata) {
         int r;
 
-        r = acquire_esp(/* privileged_mode= */ false, /* graceful= */ false, NULL, NULL, NULL, NULL, NULL);
+        r = acquire_esp(/* privileged_mode= */ false,
+                        /* graceful= */ arg_graceful,
+                        NULL, NULL, NULL, NULL, NULL);
         if (r < 0)
                 return r;
 
@@ -2225,10 +2121,12 @@ static int verb_is_installed(int argc, char *argv[], void *userdata) {
                 return r;
 
         if (r > 0) {
-                puts("yes");
+                if (!arg_quiet)
+                        puts("yes");
                 return EXIT_SUCCESS;
         } else {
-                puts("no");
+                if (!arg_quiet)
+                        puts("no");
                 return EXIT_FAILURE;
         }
 }

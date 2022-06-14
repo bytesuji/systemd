@@ -378,20 +378,13 @@ static void dns_cache_item_update_positive(
 
                 assert_se(hashmap_replace(c->by_key, rr->key, i) >= 0);
 
-        dns_resource_record_ref(rr);
-        dns_resource_record_unref(i->rr);
-        i->rr = rr;
+        DNS_RR_REPLACE(i->rr, dns_resource_record_ref(rr));
 
-        dns_resource_key_unref(i->key);
-        i->key = dns_resource_key_ref(rr->key);
+        DNS_RESOURCE_KEY_REPLACE(i->key, dns_resource_key_ref(rr->key));
 
-        dns_answer_ref(answer);
-        dns_answer_unref(i->answer);
-        i->answer = answer;
+        DNS_ANSWER_REPLACE(i->answer, dns_answer_ref(answer));
 
-        dns_packet_ref(full_packet);
-        dns_packet_unref(i->full_packet);
-        i->full_packet = full_packet;
+        DNS_PACKET_REPLACE(i->full_packet, dns_packet_ref(full_packet));
 
         i->until = calculate_until(rr, min_ttl, UINT32_MAX, timestamp, false);
         i->query_flags = query_flags & CACHEABLE_QUERY_FLAGS;
@@ -419,7 +412,6 @@ static int dns_cache_put_positive(
                 int owner_family,
                 const union in_addr_union *owner_address) {
 
-        _cleanup_(dns_cache_item_freep) DnsCacheItem *i = NULL;
         char key_str[DNS_RESOURCE_KEY_STRING_MAX];
         DnsCacheItem *existing;
         uint32_t min_ttl;
@@ -476,7 +468,7 @@ static int dns_cache_put_positive(
 
         dns_cache_make_space(c, 1);
 
-        i = new(DnsCacheItem, 1);
+        _cleanup_(dns_cache_item_freep) DnsCacheItem *i = new(DnsCacheItem, 1);
         if (!i)
                 return -ENOMEM;
 
@@ -500,23 +492,17 @@ static int dns_cache_put_positive(
         if (r < 0)
                 return r;
 
-        if (DEBUG_LOGGING) {
-                _cleanup_free_ char *t = NULL;
+        log_debug("Added positive %s %s%s cache entry for %s "USEC_FMT"s on %s/%s/%s",
+                  FLAGS_SET(i->query_flags, SD_RESOLVED_AUTHENTICATED) ? "authenticated" : "unauthenticated",
+                  FLAGS_SET(i->query_flags, SD_RESOLVED_CONFIDENTIAL) ? "confidential" : "non-confidential",
+                  i->shared_owner ? " shared" : "",
+                  dns_resource_key_to_string(i->key, key_str, sizeof key_str),
+                  (i->until - timestamp) / USEC_PER_SEC,
+                  i->ifindex == 0 ? "*" : FORMAT_IFNAME(i->ifindex),
+                  af_to_name_short(i->owner_family),
+                  IN_ADDR_TO_STRING(i->owner_family, &i->owner_address));
 
-                (void) in_addr_to_string(i->owner_family, &i->owner_address, &t);
-
-                log_debug("Added positive %s %s%s cache entry for %s "USEC_FMT"s on %s/%s/%s",
-                          FLAGS_SET(i->query_flags, SD_RESOLVED_AUTHENTICATED) ? "authenticated" : "unauthenticated",
-                          FLAGS_SET(i->query_flags, SD_RESOLVED_CONFIDENTIAL) ? "confidential" : "non-confidential",
-                          i->shared_owner ? " shared" : "",
-                          dns_resource_key_to_string(i->key, key_str, sizeof key_str),
-                          (i->until - timestamp) / USEC_PER_SEC,
-                          i->ifindex == 0 ? "*" : FORMAT_IFNAME(i->ifindex),
-                          af_to_name_short(i->owner_family),
-                          strna(t));
-        }
-
-        i = NULL;
+        TAKE_PTR(i);
         return 0;
 }
 

@@ -32,6 +32,7 @@
 {{type}}.PassEnvironment,                  config_parse_pass_environ,                   0,                                  offsetof({{type}}, exec_context.pass_environment)
 {{type}}.UnsetEnvironment,                 config_parse_unset_environ,                  0,                                  offsetof({{type}}, exec_context.unset_environment)
 {{type}}.DynamicUser,                      config_parse_bool,                           true,                               offsetof({{type}}, exec_context.dynamic_user)
+{{type}}.DynamicUserNFTSet,                config_parse_dynamic_user_nft_set,           0,                                  offsetof({{type}}, exec_context)
 {{type}}.RemoveIPC,                        config_parse_bool,                           0,                                  offsetof({{type}}, exec_context.remove_ipc)
 {{type}}.StandardInput,                    config_parse_exec_input,                     0,                                  offsetof({{type}}, exec_context)
 {{type}}.StandardOutput,                   config_parse_exec_output,                    0,                                  offsetof({{type}}, exec_context)
@@ -241,6 +242,7 @@
 {{type}}.SocketBindAllow,                  config_parse_cgroup_socket_bind,             0,                                  offsetof({{type}}, cgroup_context.socket_bind_allow)
 {{type}}.SocketBindDeny,                   config_parse_cgroup_socket_bind,             0,                                  offsetof({{type}}, cgroup_context.socket_bind_deny)
 {{type}}.RestrictNetworkInterfaces,        config_parse_restrict_network_interfaces,    0,                                  offsetof({{type}}, cgroup_context)
+{{type}}.ControlGroupNFTSet,               config_parse_cgroup_nft_set,                 0,                                  offsetof({{type}}, cgroup_context)
 {%- endmacro -%}
 
 %{
@@ -336,6 +338,7 @@ Unit.ConditionSecurity,                  config_parse_unit_condition_string,    
 Unit.ConditionCapability,                config_parse_unit_condition_string,          CONDITION_CAPABILITY,               offsetof(Unit, conditions)
 Unit.ConditionACPower,                   config_parse_unit_condition_string,          CONDITION_AC_POWER,                 offsetof(Unit, conditions)
 Unit.ConditionMemory,                    config_parse_unit_condition_string,          CONDITION_MEMORY,                   offsetof(Unit, conditions)
+Unit.ConditionCPUFeature,                config_parse_unit_condition_string,          CONDITION_CPU_FEATURE,              offsetof(Unit, conditions)
 Unit.ConditionCPUs,                      config_parse_unit_condition_string,          CONDITION_CPUS,                     offsetof(Unit, conditions)
 Unit.ConditionEnvironment,               config_parse_unit_condition_string,          CONDITION_ENVIRONMENT,              offsetof(Unit, conditions)
 Unit.ConditionUser,                      config_parse_unit_condition_string,          CONDITION_USER,                     offsetof(Unit, conditions)
@@ -366,6 +369,7 @@ Unit.AssertSecurity,                     config_parse_unit_condition_string,    
 Unit.AssertCapability,                   config_parse_unit_condition_string,          CONDITION_CAPABILITY,               offsetof(Unit, asserts)
 Unit.AssertACPower,                      config_parse_unit_condition_string,          CONDITION_AC_POWER,                 offsetof(Unit, asserts)
 Unit.AssertMemory,                       config_parse_unit_condition_string,          CONDITION_MEMORY,                   offsetof(Unit, asserts)
+Unit.AssertCPUFeature,                   config_parse_unit_condition_string,          CONDITION_CPU_FEATURE,              offsetof(Unit, asserts)
 Unit.AssertCPUs,                         config_parse_unit_condition_string,          CONDITION_CPUS,                     offsetof(Unit, asserts)
 Unit.AssertEnvironment,                  config_parse_unit_condition_string,          CONDITION_ENVIRONMENT,              offsetof(Unit, asserts)
 Unit.AssertUser,                         config_parse_unit_condition_string,          CONDITION_USER,                     offsetof(Unit, asserts)

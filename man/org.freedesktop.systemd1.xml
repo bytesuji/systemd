@@ -164,6 +164,7 @@ node /org/freedesktop/systemd1 {
       Dump(out s output);
       DumpByFileDescriptor(out h fd);
       Reload();
+      @org.freedesktop.DBus.Method.NoReply("true")
       Reexecute();
       @org.freedesktop.systemd1.Privileged("true")
       Exit();
@@ -1433,7 +1434,7 @@ node /org/freedesktop/systemd1 {
       <varname>properties</varname> contains properties of the unit, specified like in
       <function>SetUnitProperties()</function>. <varname>aux</varname> is currently unused and should be
       passed as an empty array. See the
-      <ulink url="https://www.freedesktop.org/wiki/Software/systemd/ControlGroupInterface/">New Control Group
+      <ulink url="https://www.freedesktop.org/wiki/Software/systemd/ControlGroupInterface">New Control Group
       Interface</ulink> for more information how to make use of this functionality for resource control
       purposes.</para>
     </refsect2>
@@ -1501,7 +1502,7 @@ node /org/freedesktop/systemd1 {
       known: <literal>split-usr</literal>, <literal>mtab-not-symlink</literal>,
       <literal>cgroups-missing</literal>, <literal>local-hwclock</literal>. <literal>split-usr</literal> is
       set if <filename>/usr/</filename> is not pre-mounted when systemd is first invoked. See
-      <ulink url="http://freedesktop.org/wiki/Software/systemd/separate-usr-is-broken">
+      <ulink url="https://www.freedesktop.org/wiki/Software/systemd/separate-usr-is-broken">
       Booting Without /usr is Broken</ulink>
       for details why this is bad. <literal>mtab-not-symlink</literal> indicates that
       <filename>/etc/mtab</filename> is not a symlink to <filename>/proc/self/mounts</filename> as
@@ -2598,6 +2599,8 @@ node /org/freedesktop/systemd1/unit/avahi_2ddaemon_2eservice {
       @org.freedesktop.DBus.Property.EmitsChangedSignal("false")
       readonly (bas) RestrictNetworkInterfaces = ...;
       @org.freedesktop.DBus.Property.EmitsChangedSignal("const")
+      readonly a(iss) ControlGroupNFTSet = [...];
+      @org.freedesktop.DBus.Property.EmitsChangedSignal("const")
       readonly as Environment = ['...', ...];
       @org.freedesktop.DBus.Property.EmitsChangedSignal("const")
       readonly a(sb) EnvironmentFiles = [...];
@@ -2781,6 +2784,8 @@ node /org/freedesktop/systemd1/unit/avahi_2ddaemon_2eservice {
       readonly s Group = '...';
       @org.freedesktop.DBus.Property.EmitsChangedSignal("const")
       readonly b DynamicUser = ...;
+      @org.freedesktop.DBus.Property.EmitsChangedSignal("const")
+      readonly a(iss) DynamicUserNFTSet = [...];
       @org.freedesktop.DBus.Property.EmitsChangedSignal("const")
       readonly b RemoveIPC = ...;
       @org.freedesktop.DBus.Property.EmitsChangedSignal("const")
@@ -3169,6 +3174,8 @@ node /org/freedesktop/systemd1/unit/avahi_2ddaemon_2eservice {
 
     <!--property RestrictNetworkInterfaces is not documented!-->
 
+    <!--property ControlGroupNFTSet is not documented!-->
+
     <!--property EnvironmentFiles is not documented!-->
 
     <!--property PassEnvironment is not documented!-->
@@ -3326,6 +3333,8 @@ node /org/freedesktop/systemd1/unit/avahi_2ddaemon_2eservice {
     <!--property Group is not documented!-->
 
     <!--property DynamicUser is not documented!-->
+
+    <!--property DynamicUserNFTSet is not documented!-->
 
     <!--property RemoveIPC is not documented!-->
 
@@ -3749,6 +3758,8 @@ node /org/freedesktop/systemd1/unit/avahi_2ddaemon_2eservice {
 
     <variablelist class="dbus-property" generated="True" extra-ref="RestrictNetworkInterfaces"/>
 
+    <variablelist class="dbus-property" generated="True" extra-ref="ControlGroupNFTSet"/>
+
     <variablelist class="dbus-property" generated="True" extra-ref="Environment"/>
 
     <variablelist class="dbus-property" generated="True" extra-ref="EnvironmentFiles"/>
@@ -3932,6 +3943,8 @@ node /org/freedesktop/systemd1/unit/avahi_2ddaemon_2eservice {
     <variablelist class="dbus-property" generated="True" extra-ref="Group"/>
 
     <variablelist class="dbus-property" generated="True" extra-ref="DynamicUser"/>
+
+    <variablelist class="dbus-property" generated="True" extra-ref="DynamicUserNFTSet"/>
 
     <variablelist class="dbus-property" generated="True" extra-ref="RemoveIPC"/>
 
@@ -4486,6 +4499,8 @@ node /org/freedesktop/systemd1/unit/avahi_2ddaemon_2esocket {
       @org.freedesktop.DBus.Property.EmitsChangedSignal("false")
       readonly (bas) RestrictNetworkInterfaces = ...;
       @org.freedesktop.DBus.Property.EmitsChangedSignal("const")
+      readonly a(iss) ControlGroupNFTSet = [...];
+      @org.freedesktop.DBus.Property.EmitsChangedSignal("const")
       readonly as Environment = ['...', ...];
       @org.freedesktop.DBus.Property.EmitsChangedSignal("const")
       readonly a(sb) EnvironmentFiles = [...];
@@ -4669,6 +4684,8 @@ node /org/freedesktop/systemd1/unit/avahi_2ddaemon_2esocket {
       readonly s Group = '...';
       @org.freedesktop.DBus.Property.EmitsChangedSignal("const")
       readonly b DynamicUser = ...;
+      @org.freedesktop.DBus.Property.EmitsChangedSignal("const")
+      readonly a(iss) DynamicUserNFTSet = [...];
       @org.freedesktop.DBus.Property.EmitsChangedSignal("const")
       readonly b RemoveIPC = ...;
       @org.freedesktop.DBus.Property.EmitsChangedSignal("const")
@@ -5081,6 +5098,8 @@ node /org/freedesktop/systemd1/unit/avahi_2ddaemon_2esocket {
 
     <!--property RestrictNetworkInterfaces is not documented!-->
 
+    <!--property ControlGroupNFTSet is not documented!-->
+
     <!--property EnvironmentFiles is not documented!-->
 
     <!--property PassEnvironment is not documented!-->
@@ -5238,6 +5257,8 @@ node /org/freedesktop/systemd1/unit/avahi_2ddaemon_2esocket {
     <!--property Group is not documented!-->
 
     <!--property DynamicUser is not documented!-->
+
+    <!--property DynamicUserNFTSet is not documented!-->
 
     <!--property RemoveIPC is not documented!-->
 
@@ -5655,6 +5676,8 @@ node /org/freedesktop/systemd1/unit/avahi_2ddaemon_2esocket {
 
     <variablelist class="dbus-property" generated="True" extra-ref="RestrictNetworkInterfaces"/>
 
+    <variablelist class="dbus-property" generated="True" extra-ref="ControlGroupNFTSet"/>
+
     <variablelist class="dbus-property" generated="True" extra-ref="Environment"/>
 
     <variablelist class="dbus-property" generated="True" extra-ref="EnvironmentFiles"/>
@@ -5838,6 +5861,8 @@ node /org/freedesktop/systemd1/unit/avahi_2ddaemon_2esocket {
     <variablelist class="dbus-property" generated="True" extra-ref="Group"/>
 
     <variablelist class="dbus-property" generated="True" extra-ref="DynamicUser"/>
+
+    <variablelist class="dbus-property" generated="True" extra-ref="DynamicUserNFTSet"/>
 
     <variablelist class="dbus-property" generated="True" extra-ref="RemoveIPC"/>
 
@@ -6281,6 +6306,8 @@ node /org/freedesktop/systemd1/unit/home_2emount {
       @org.freedesktop.DBus.Property.EmitsChangedSignal("false")
       readonly (bas) RestrictNetworkInterfaces = ...;
       @org.freedesktop.DBus.Property.EmitsChangedSignal("const")
+      readonly a(iss) ControlGroupNFTSet = [...];
+      @org.freedesktop.DBus.Property.EmitsChangedSignal("const")
       readonly as Environment = ['...', ...];
       @org.freedesktop.DBus.Property.EmitsChangedSignal("const")
       readonly a(sb) EnvironmentFiles = [...];
@@ -6464,6 +6491,8 @@ node /org/freedesktop/systemd1/unit/home_2emount {
       readonly s Group = '...';
       @org.freedesktop.DBus.Property.EmitsChangedSignal("const")
       readonly b DynamicUser = ...;
+      @org.freedesktop.DBus.Property.EmitsChangedSignal("const")
+      readonly a(iss) DynamicUserNFTSet = [...];
       @org.freedesktop.DBus.Property.EmitsChangedSignal("const")
       readonly b RemoveIPC = ...;
       @org.freedesktop.DBus.Property.EmitsChangedSignal("const")
@@ -6804,6 +6833,8 @@ node /org/freedesktop/systemd1/unit/home_2emount {
 
     <!--property RestrictNetworkInterfaces is not documented!-->
 
+    <!--property ControlGroupNFTSet is not documented!-->
+
     <!--property EnvironmentFiles is not documented!-->
 
     <!--property PassEnvironment is not documented!-->
@@ -6961,6 +6992,8 @@ node /org/freedesktop/systemd1/unit/home_2emount {
     <!--property Group is not documented!-->
 
     <!--property DynamicUser is not documented!-->
+
+    <!--property DynamicUserNFTSet is not documented!-->
 
     <!--property RemoveIPC is not documented!-->
 
@@ -7296,6 +7329,8 @@ node /org/freedesktop/systemd1/unit/home_2emount {
 
     <variablelist class="dbus-property" generated="True" extra-ref="RestrictNetworkInterfaces"/>
 
+    <variablelist class="dbus-property" generated="True" extra-ref="ControlGroupNFTSet"/>
+
     <variablelist class="dbus-property" generated="True" extra-ref="Environment"/>
 
     <variablelist class="dbus-property" generated="True" extra-ref="EnvironmentFiles"/>
@@ -7479,6 +7514,8 @@ node /org/freedesktop/systemd1/unit/home_2emount {
     <variablelist class="dbus-property" generated="True" extra-ref="Group"/>
 
     <variablelist class="dbus-property" generated="True" extra-ref="DynamicUser"/>
+
+    <variablelist class="dbus-property" generated="True" extra-ref="DynamicUserNFTSet"/>
 
     <variablelist class="dbus-property" generated="True" extra-ref="RemoveIPC"/>
 
@@ -8049,6 +8086,8 @@ node /org/freedesktop/systemd1/unit/dev_2dsda3_2eswap {
       @org.freedesktop.DBus.Property.EmitsChangedSignal("false")
       readonly (bas) RestrictNetworkInterfaces = ...;
       @org.freedesktop.DBus.Property.EmitsChangedSignal("const")
+      readonly a(iss) ControlGroupNFTSet = [...];
+      @org.freedesktop.DBus.Property.EmitsChangedSignal("const")
       readonly as Environment = ['...', ...];
       @org.freedesktop.DBus.Property.EmitsChangedSignal("const")
       readonly a(sb) EnvironmentFiles = [...];
@@ -8232,6 +8271,8 @@ node /org/freedesktop/systemd1/unit/dev_2dsda3_2eswap {
       readonly s Group = '...';
       @org.freedesktop.DBus.Property.EmitsChangedSignal("const")
       readonly b DynamicUser = ...;
+      @org.freedesktop.DBus.Property.EmitsChangedSignal("const")
+      readonly a(iss) DynamicUserNFTSet = [...];
       @org.freedesktop.DBus.Property.EmitsChangedSignal("const")
       readonly b RemoveIPC = ...;
       @org.freedesktop.DBus.Property.EmitsChangedSignal("const")
@@ -8558,6 +8599,8 @@ node /org/freedesktop/systemd1/unit/dev_2dsda3_2eswap {
 
     <!--property RestrictNetworkInterfaces is not documented!-->
 
+    <!--property ControlGroupNFTSet is not documented!-->
+
     <!--property EnvironmentFiles is not documented!-->
 
     <!--property PassEnvironment is not documented!-->
@@ -8715,6 +8758,8 @@ node /org/freedesktop/systemd1/unit/dev_2dsda3_2eswap {
     <!--property Group is not documented!-->
 
     <!--property DynamicUser is not documented!-->
+
+    <!--property DynamicUserNFTSet is not documented!-->
 
     <!--property RemoveIPC is not documented!-->
 
@@ -9036,6 +9081,8 @@ node /org/freedesktop/systemd1/unit/dev_2dsda3_2eswap {
 
     <variablelist class="dbus-property" generated="True" extra-ref="RestrictNetworkInterfaces"/>
 
+    <variablelist class="dbus-property" generated="True" extra-ref="ControlGroupNFTSet"/>
+
     <variablelist class="dbus-property" generated="True" extra-ref="Environment"/>
 
     <variablelist class="dbus-property" generated="True" extra-ref="EnvironmentFiles"/>
@@ -9219,6 +9266,8 @@ node /org/freedesktop/systemd1/unit/dev_2dsda3_2eswap {
     <variablelist class="dbus-property" generated="True" extra-ref="Group"/>
 
     <variablelist class="dbus-property" generated="True" extra-ref="DynamicUser"/>
+
+    <variablelist class="dbus-property" generated="True" extra-ref="DynamicUserNFTSet"/>
 
     <variablelist class="dbus-property" generated="True" extra-ref="RemoveIPC"/>
 
@@ -9647,6 +9696,8 @@ node /org/freedesktop/systemd1/unit/system_2eslice {
       readonly a(iiqq) SocketBindDeny = [...];
       @org.freedesktop.DBus.Property.EmitsChangedSignal("false")
       readonly (bas) RestrictNetworkInterfaces = ...;
+      @org.freedesktop.DBus.Property.EmitsChangedSignal("const")
+      readonly a(iss) ControlGroupNFTSet = [...];
   };
   interface org.freedesktop.DBus.Peer { ... };
   interface org.freedesktop.DBus.Introspectable { ... };
@@ -9798,6 +9849,8 @@ node /org/freedesktop/systemd1/unit/system_2eslice {
     <!--property SocketBindDeny is not documented!-->
 
     <!--property RestrictNetworkInterfaces is not documented!-->
+
+    <!--property ControlGroupNFTSet is not documented!-->
 
     <!--Autogenerated cross-references for systemd.directives, do not edit-->
 
@@ -9956,6 +10009,8 @@ node /org/freedesktop/systemd1/unit/system_2eslice {
     <variablelist class="dbus-property" generated="True" extra-ref="SocketBindDeny"/>
 
     <variablelist class="dbus-property" generated="True" extra-ref="RestrictNetworkInterfaces"/>
+
+    <variablelist class="dbus-property" generated="True" extra-ref="ControlGroupNFTSet"/>
 
     <!--End of Autogenerated section-->
 
@@ -10137,6 +10192,8 @@ node /org/freedesktop/systemd1/unit/session_2d1_2escope {
       @org.freedesktop.DBus.Property.EmitsChangedSignal("false")
       readonly (bas) RestrictNetworkInterfaces = ...;
       @org.freedesktop.DBus.Property.EmitsChangedSignal("const")
+      readonly a(iss) ControlGroupNFTSet = [...];
+      @org.freedesktop.DBus.Property.EmitsChangedSignal("const")
       readonly s KillMode = '...';
       @org.freedesktop.DBus.Property.EmitsChangedSignal("const")
       readonly i KillSignal = ...;
@@ -10305,6 +10362,8 @@ node /org/freedesktop/systemd1/unit/session_2d1_2escope {
     <!--property SocketBindDeny is not documented!-->
 
     <!--property RestrictNetworkInterfaces is not documented!-->
+
+    <!--property ControlGroupNFTSet is not documented!-->
 
     <!--property KillMode is not documented!-->
 
@@ -10492,6 +10551,8 @@ node /org/freedesktop/systemd1/unit/session_2d1_2escope {
 
     <variablelist class="dbus-property" generated="True" extra-ref="RestrictNetworkInterfaces"/>
 
+    <variablelist class="dbus-property" generated="True" extra-ref="ControlGroupNFTSet"/>
+
     <variablelist class="dbus-property" generated="True" extra-ref="KillMode"/>
 
     <variablelist class="dbus-property" generated="True" extra-ref="KillSignal"/>
@@ -10656,10 +10717,5 @@ $ gdbus introspect --system --dest org.freedesktop.systemd1 \
     </example>
   </refsect1>
 
-  <refsect1>
-    <title>Versioning</title>
-
-    <para>These D-Bus interfaces follow <ulink url="http://0pointer.de/blog/projects/versioning-dbus.html">
-    the usual interface versioning guidelines</ulink>.</para>
-  </refsect1>
+  <xi:include href="org.freedesktop.locale1.xml" xpointer="versioning"/>
 </refentry>

@@ -317,6 +317,21 @@ TEST(strv_split) {
 
         assert_se(strv_split_full(&l, "\\", NULL, EXTRACT_UNQUOTE | EXTRACT_RELAX | EXTRACT_UNESCAPE_RELAX) == 1);
         assert_se(strv_equal(l, STRV_MAKE("\\")));
+
+        l = strv_free_erase(l);
+
+        assert_se(l = strv_split("\\", NULL));
+        assert_se(strv_equal(l, STRV_MAKE("\\")));
+
+        l = strv_free_erase(l);
+
+        assert_se(l = strv_split("aa\\ bb\\", NULL));
+        assert_se(strv_equal(l, STRV_MAKE("aa\\", "bb\\")));
+
+        l = strv_free_erase(l);
+
+        assert_se(l = strv_split("aa\" bb'", NULL));
+        assert_se(strv_equal(l, STRV_MAKE("aa\"", "bb'")));
 }
 
 TEST(strv_split_empty) {
@@ -586,6 +601,25 @@ TEST(strv_extend_strv) {
         assert_se(strv_length(n) == 4);
 }
 
+TEST(strv_extend_with_size) {
+        _cleanup_strv_free_ char **a = NULL;
+        size_t n = SIZE_MAX;
+
+        a = strv_new("test", "test1");
+        assert_se(a);
+
+        assert_se(strv_extend_with_size(&a, &n, "test2") >= 0);
+        assert_se(n == 3);
+        assert_se(strv_extend_with_size(&a, &n, "test3") >= 0);
+        assert_se(n == 4);
+
+        assert_se(streq(a[0], "test"));
+        assert_se(streq(a[1], "test1"));
+        assert_se(streq(a[2], "test2"));
+        assert_se(streq(a[3], "test3"));
+        assert_se(a[4] == NULL);
+}
+
 TEST(strv_extend) {
         _cleanup_strv_free_ char **a = NULL, **b = NULL;
 
@@ -729,6 +763,30 @@ TEST(strv_push_prepend) {
         assert_se(streq(a[3], "bar"));
         assert_se(streq(a[4], "three"));
         assert_se(!a[5]);
+}
+
+TEST(strv_push_with_size) {
+        _cleanup_strv_free_ char **a = NULL;
+        size_t n = 0;
+        char *i, *j;
+
+        assert_se(i = strdup("foo"));
+        assert_se(strv_push_with_size(&a, &n, i) >= 0);
+        assert_se(n == 1);
+
+        assert_se(i = strdup("a"));
+        assert_se(j = strdup("b"));
+        assert_se(strv_push_with_size(&a, &n, i) >= 0);
+        assert_se(n == 2);
+        assert_se(strv_push_with_size(&a, &n, j) >= 0);
+        assert_se(n == 3);
+
+        assert_se(streq_ptr(a[0], "foo"));
+        assert_se(streq_ptr(a[1], "a"));
+        assert_se(streq_ptr(a[2], "b"));
+        assert_se(streq_ptr(a[3], NULL));
+
+        assert_se(n = strv_length(a));
 }
 
 TEST(strv_push) {

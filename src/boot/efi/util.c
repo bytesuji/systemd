@@ -12,22 +12,14 @@ EFI_STATUS parse_boolean(const CHAR8 *v, BOOLEAN *b) {
         if (!v)
                 return EFI_INVALID_PARAMETER;
 
-        if (strcmpa(v, (CHAR8 *)"1") == 0 ||
-            strcmpa(v, (CHAR8 *)"yes") == 0 ||
-            strcmpa(v, (CHAR8 *)"y") == 0 ||
-            strcmpa(v, (CHAR8 *)"true") == 0 ||
-            strcmpa(v, (CHAR8 *)"t") == 0 ||
-            strcmpa(v, (CHAR8 *)"on") == 0) {
+        if (streq8((char *) v, "1") || streq8((char *) v, "yes") || streq8((char *) v, "y") ||
+            streq8((char *) v, "true") || streq8((char *) v, "t") || streq8((char *) v, "on")) {
                 *b = TRUE;
                 return EFI_SUCCESS;
         }
 
-        if (strcmpa(v, (CHAR8 *)"0") == 0 ||
-            strcmpa(v, (CHAR8 *)"no") == 0 ||
-            strcmpa(v, (CHAR8 *)"n") == 0 ||
-            strcmpa(v, (CHAR8 *)"false") == 0 ||
-            strcmpa(v, (CHAR8 *)"f") == 0 ||
-            strcmpa(v, (CHAR8 *)"off") == 0) {
+        if (streq8((char *) v, "0") || streq8((char *) v, "no") || streq8((char *) v, "n") ||
+            streq8((char *) v, "false") || streq8((char *) v, "f") || streq8((char *) v, "off")) {
                 *b = FALSE;
                 return EFI_SUCCESS;
         }
@@ -48,7 +40,7 @@ EFI_STATUS efivar_set(const EFI_GUID *vendor, const CHAR16 *name, const CHAR16 *
         assert(vendor);
         assert(name);
 
-        return efivar_set_raw(vendor, name, value, value ? StrSize(value) : 0, flags);
+        return efivar_set_raw(vendor, name, value, value ? strsize16(value) : 0, flags);
 }
 
 EFI_STATUS efivar_set_uint_string(const EFI_GUID *vendor, const CHAR16 *name, UINTN i, UINT32 flags) {
@@ -57,7 +49,10 @@ EFI_STATUS efivar_set_uint_string(const EFI_GUID *vendor, const CHAR16 *name, UI
         assert(vendor);
         assert(name);
 
-        SPrint(str, ELEMENTSOF(str), L"%u", i);
+        /* Note that SPrint has no native sized length specifier and will always use ValueToString()
+         * regardless of what sign we tell it to use. Therefore, UINTN_MAX will come out as -1 on
+         * 64bit machines. */
+        ValueToString(str, FALSE, i);
         return efivar_set(vendor, name, str, flags);
 }
 
@@ -120,9 +115,9 @@ EFI_STATUS efivar_get(const EFI_GUID *vendor, const CHAR16 *name, CHAR16 **value
         }
 
         /* Make sure a terminating NUL is available at the end */
-        val = xallocate_pool(size + sizeof(CHAR16));
+        val = xmalloc(size + sizeof(CHAR16));
 
-        CopyMem(val, buf, size);
+        memcpy(val, buf, size);
         val[size / sizeof(CHAR16) - 1] = 0; /* NUL terminate */
 
         *value = val;
@@ -132,16 +127,21 @@ EFI_STATUS efivar_get(const EFI_GUID *vendor, const CHAR16 *name, CHAR16 **value
 EFI_STATUS efivar_get_uint_string(const EFI_GUID *vendor, const CHAR16 *name, UINTN *i) {
         _cleanup_freepool_ CHAR16 *val = NULL;
         EFI_STATUS err;
+        uint64_t u;
 
         assert(vendor);
         assert(name);
         assert(i);
 
         err = efivar_get(vendor, name, &val);
-        if (!EFI_ERROR(err))
-                *i = Atoi(val);
+        if (err != EFI_SUCCESS)
+                return err;
 
-        return err;
+        if (!parse_number16(val, &u, NULL) || u > UINTN_MAX)
+                return EFI_INVALID_PARAMETER;
+
+        *i = u;
+        return EFI_SUCCESS;
 }
 
 EFI_STATUS efivar_get_uint32_le(const EFI_GUID *vendor, const CHAR16 *name, UINT32 *ret) {
@@ -194,7 +194,7 @@ EFI_STATUS efivar_get_raw(const EFI_GUID *vendor, const CHAR16 *name, CHAR8 **bu
         assert(name);
 
         l = sizeof(CHAR16 *) * EFI_MAXIMUM_VARIABLE_SIZE;
-        buf = xallocate_pool(l);
+        buf = xmalloc(l);
 
         err = RT->GetVariable((CHAR16 *) name, (EFI_GUID *) vendor, NULL, &l, buf);
         if (!EFI_ERROR(err)) {
@@ -236,7 +236,8 @@ void efivar_set_time_usec(const EFI_GUID *vendor, const CHAR16 *name, UINT64 use
         if (usec == 0)
                 return;
 
-        SPrint(str, ELEMENTSOF(str), L"%ld", usec);
+        /* See comment on ValueToString in efivar_set_uint_string(). */
+        ValueToString(str, FALSE, usec);
         efivar_set(vendor, name, str, 0);
 }
 
@@ -302,7 +303,7 @@ CHAR16 *xstra_to_str(const CHAR8 *stra) {
 
         assert(stra);
 
-        len = strlena(stra);
+        len = strlen8((const char *) stra);
         str = xnew(CHAR16, len + 1);
 
         strlen = 0;
@@ -332,7 +333,7 @@ CHAR16 *xstra_to_path(const CHAR8 *stra) {
 
         assert(stra);
 
-        len = strlena(stra);
+        len = strlen8((const char *) stra);
         str = xnew(CHAR16, len + 2);
 
         str[0] = '\\';
@@ -361,18 +362,6 @@ CHAR16 *xstra_to_path(const CHAR8 *stra) {
         }
         str[strlen] = '\0';
         return str;
-}
-
-CHAR8 *strchra(const CHAR8 *s, CHAR8 c) {
-        if (!s)
-                return NULL;
-
-        do {
-                if (*s == c)
-                        return (CHAR8*) s;
-        } while (*s++);
-
-        return NULL;
 }
 
 EFI_STATUS file_read(EFI_FILE *dir, const CHAR16 *name, UINTN off, UINTN size, CHAR8 **ret, UINTN *ret_size) {
@@ -407,13 +396,13 @@ EFI_STATUS file_read(EFI_FILE *dir, const CHAR16 *name, UINTN off, UINTN size, C
         /* Allocate some extra bytes to guarantee the result is NUL-terminated for CHAR8 and CHAR16 strings. */
         UINTN extra = size % sizeof(CHAR16) + sizeof(CHAR16);
 
-        buf = xallocate_pool(size + extra);
+        buf = xmalloc(size + extra);
         err = handle->Read(handle, &size, buf);
         if (EFI_ERROR(err))
                 return err;
 
         /* Note that handle->Read() changes size to reflect the actually bytes read. */
-        ZeroMem(buf + size, extra);
+        memset(buf + size, 0, extra);
 
         *ret = TAKE_PTR(buf);
         if (ret_size)
@@ -502,11 +491,11 @@ EFI_STATUS get_file_info_harder(
 
         /* A lot like LibFileInfo() but with useful error propagation */
 
-        fi = xallocate_pool(size);
+        fi = xmalloc(size);
         err = handle->GetInfo(handle, &GenericFileInfo, &size, fi);
         if (err == EFI_BUFFER_TOO_SMALL) {
-                FreePool(fi);
-                fi = xallocate_pool(size);  /* GetInfo tells us the required size, let's use that now */
+                free(fi);
+                fi = xmalloc(size);  /* GetInfo tells us the required size, let's use that now */
                 err = handle->GetInfo(handle, &GenericFileInfo, &size, fi);
         }
 
@@ -543,15 +532,15 @@ EFI_STATUS readdir_harder(
                  * file name length.
                  * As a side effect, most readdir_harder() calls will now be slightly faster. */
                 sz = sizeof(EFI_FILE_INFO) + 256 * sizeof(CHAR16);
-                *buffer = xallocate_pool(sz);
+                *buffer = xmalloc(sz);
                 *buffer_size = sz;
         } else
                 sz = *buffer_size;
 
         err = handle->Read(handle, &sz, *buffer);
         if (err == EFI_BUFFER_TOO_SMALL) {
-                FreePool(*buffer);
-                *buffer = xallocate_pool(sz);
+                free(*buffer);
+                *buffer = xmalloc(sz);
                 *buffer_size = sz;
                 err = handle->Read(handle, &sz, *buffer);
         }
@@ -560,66 +549,12 @@ EFI_STATUS readdir_harder(
 
         if (sz == 0) {
                 /* End of directory */
-                FreePool(*buffer);
+                free(*buffer);
                 *buffer = NULL;
                 *buffer_size = 0;
         }
 
         return EFI_SUCCESS;
-}
-
-UINTN strnlena(const CHAR8 *p, UINTN maxlen) {
-        UINTN c;
-
-        if (!p)
-                return 0;
-
-        for (c = 0; c < maxlen; c++)
-                if (p[c] == 0)
-                        break;
-
-        return c;
-}
-
-INTN strncasecmpa(const CHAR8 *a, const CHAR8 *b, UINTN maxlen) {
-        if (!a || !b)
-                return CMP(a, b);
-
-        while (maxlen > 0) {
-                CHAR8 ca = *a, cb = *b;
-                if (ca >= 'A' && ca <= 'Z')
-                        ca += 'a' - 'A';
-                if (cb >= 'A' && cb <= 'Z')
-                        cb += 'a' - 'A';
-                if (!ca || ca != cb)
-                        return ca - cb;
-
-                a++;
-                b++;
-                maxlen--;
-        }
-
-        return 0;
-}
-
-CHAR8 *xstrndup8(const CHAR8 *p, UINTN sz) {
-        CHAR8 *n;
-
-        /* Following efilib's naming scheme this function would be called strndupa(), but we already have a
-         * function named like this in userspace, and it does something different there, hence to minimize
-         * confusion, let's pick a different name here */
-
-        assert(p || sz == 0);
-
-        sz = strnlena(p, sz);
-
-        n = xallocate_pool(sz + 1);
-
-        if (sz > 0)
-                CopyMem(n, p, sz);
-        n[sz] = 0;
-
-        return n;
 }
 
 BOOLEAN is_ascii(const CHAR16 *f) {
@@ -638,9 +573,9 @@ CHAR16 **strv_free(CHAR16 **v) {
                 return NULL;
 
         for (CHAR16 **i = v; *i; i++)
-                FreePool(*i);
+                free(*i);
 
-        FreePool(v);
+        free(v);
         return NULL;
 }
 
@@ -752,3 +687,59 @@ void beep(UINTN beep_count) {
         }
 }
 #endif
+
+EFI_STATUS open_volume(EFI_HANDLE device, EFI_FILE **ret_file) {
+        EFI_STATUS err;
+        EFI_FILE *file;
+        EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *volume;
+
+        assert(ret_file);
+
+        err = BS->HandleProtocol(device, &FileSystemProtocol, (void **) &volume);
+        if (err != EFI_SUCCESS)
+                return err;
+
+        err = volume->OpenVolume(volume, &file);
+        if (err != EFI_SUCCESS)
+                return err;
+
+        *ret_file = file;
+        return EFI_SUCCESS;
+}
+
+EFI_STATUS make_file_device_path(EFI_HANDLE device, const char16_t *file, EFI_DEVICE_PATH **ret_dp) {
+        EFI_STATUS err;
+        EFI_DEVICE_PATH *dp;
+
+        assert(file);
+        assert(ret_dp);
+
+        err = BS->HandleProtocol(device, &DevicePathProtocol, (void **) &dp);
+        if (err != EFI_SUCCESS)
+                return err;
+
+        EFI_DEVICE_PATH *end_node = dp;
+        while (!IsDevicePathEnd(end_node))
+                end_node = NextDevicePathNode(end_node);
+
+        size_t file_size = strsize16(file);
+        size_t dp_size = ((uint8_t *) end_node - (uint8_t *) dp) + END_DEVICE_PATH_LENGTH;
+
+        /* Make a copy that can also hold a file media device path. */
+        *ret_dp = xmalloc(dp_size + file_size + SIZE_OF_FILEPATH_DEVICE_PATH);
+        memcpy(*ret_dp, dp, dp_size);
+
+        /* Point dp to the end node of the copied device path. */
+        dp = (EFI_DEVICE_PATH *) ((uint8_t *) *ret_dp + dp_size - END_DEVICE_PATH_LENGTH);
+
+        /* Replace end node with file media device path. */
+        FILEPATH_DEVICE_PATH *file_dp = (FILEPATH_DEVICE_PATH *) dp;
+        file_dp->Header.Type = MEDIA_DEVICE_PATH;
+        file_dp->Header.SubType = MEDIA_FILEPATH_DP;
+        memcpy(&file_dp->PathName, file, file_size);
+        SetDevicePathNodeLength(&file_dp->Header, SIZE_OF_FILEPATH_DEVICE_PATH + file_size);
+
+        dp = NextDevicePathNode(dp);
+        SetDevicePathEndNode(dp);
+        return EFI_SUCCESS;
+}

@@ -53,19 +53,28 @@ boot. For that it's essential to:
    [`/etc/machine-info`](https://www.freedesktop.org/software/systemd/man/machine-info.html)
    which carry additional identifying information about the OS image.
 
+5. Remove `/var/lib/systemd/credential.secret` which is used for protecting
+   service credentials, see
+   [`systemd.exec(5)`](https://www.freedesktop.org/software/systemd/man/systemd.exec.html#Credentials)
+   and
+   [`systemd-creds(1)`](https://www.freedesktop.org/software/systemd/man/systemd-creds.html)
+   for details. Note that by removing this file access to previously encrypted
+   credentials from this image is lost. The file is automatically generated if
+   a new credential is encrypted and the file does not exist yet.
+
 ## Boot Menu Entry Identifiers
 
 The
 [`kernel-install(8)`](https://www.freedesktop.org/software/systemd/man/kernel-install.html)
-logic used to generate [Boot Loader Specification Type
-1](https://systemd.io/BOOT_LOADER_SPECIFICATION) entries by default uses the
-machine ID as stored in `/etc/machine-id` for naming boot menu entries and the
-directories in the ESP to place kernel images in. This is done in order to
-allow multiple installations of the same OS on the same system without
-conflicts. However, this is problematic if the machine ID shall be generated
-automatically on first boot: if the ID is not known before the first boot it
-cannot be used to name the most basic resources required for the boot process
-to complete.
+logic used to generate
+[Boot Loader Specification Type 1](BOOT_LOADER_SPECIFICATION.md) entries by
+default uses the machine ID as stored in `/etc/machine-id` for naming boot menu
+entries and the directories in the ESP to place kernel images in. This is done
+in order to allow multiple installations of the same OS on the same system
+without conflicts. However, this is problematic if the machine ID shall be
+generated automatically on first boot: if the ID is not known before the first
+boot it cannot be used to name the most basic resources required for the boot
+process to complete.
 
 Thus, for images that shall acquire their identity on first boot only, it is
 required to use a different identifier for naming boot menu entries. To allow
@@ -92,7 +101,7 @@ on first boot as needed.
 
 Specifically, the following mechanisms are in place:
 
-1. The `swich-root` logic in systemd, that is used to switch from the initrd
+1. The `switch-root` logic in systemd, that is used to switch from the initrd
    phase to the host will create the basic OS hierarchy skeleton if missing. It
    will create a couple of directories strictly necessary to boot up
    successfully, plus essential symlinks (such as those necessary for the
@@ -194,9 +203,8 @@ it, then format it.
    in. The `x-systemd.growfs` mount option in `/etc/fstab` is sufficient to
    enable this logic for specific mounts. Alternatively appropriately set up
    partitions can set GPT partition flag 59 to request this behaviour, see the
-   [Discoverable Partitions
-   Specification](https://systemd.io/DISCOVERABLE_PARTITIONS) for details. If
-   the file system is already grown it executes no operation.
+   [Discoverable Partitions Specification](DISCOVERABLE_PARTITIONS.md) for
+   details. If the file system is already grown it executes no operation.
 
 3. Similar, the `systemd-makefs@.service` and `systemd-makeswap@.service`
    services can format file systems and swap spaces before first use, if they
@@ -259,8 +267,8 @@ fields.
 [`machine-id(5)`](https://www.freedesktop.org/software/systemd/man/machine-id.html)<br>
 [`systemd-random-seed(8)`](https://www.freedesktop.org/software/systemd/man/systemd-random-seed.service.html)<br>
 [`os-release(5)`](https://www.freedesktop.org/software/systemd/man/os-release.html)<br>
-[Boot Loader Specification](https://systemd.io/BOOT_LOADER_SPECIFICATION)<br>
-[Discoverable Partitions Specification](https://systemd.io/DISCOVERABLE_PARTITIONS)<br>
+[Boot Loader Specification](BOOT_LOADER_SPECIFICATION.md)<br>
+[Discoverable Partitions Specification](DISCOVERABLE_PARTITIONS.md)<br>
 [`mkosi`](https://github.com/systemd/mkosi)<br>
 [`systemd-boot(7)`](https://www.freedesktop.org/software/systemd/man/systemd-boot.html)<br>
 [`systemd-repart(8)`](https://www.freedesktop.org/software/systemd/man/systemd-repart.service.html)<br>

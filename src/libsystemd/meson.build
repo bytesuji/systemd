@@ -5,8 +5,6 @@ sd_journal_sources = files(
         'sd-journal/audit-type.h',
         'sd-journal/catalog.c',
         'sd-journal/catalog.h',
-        'sd-journal/compress.c',
-        'sd-journal/compress.h',
         'sd-journal/journal-def.h',
         'sd-journal/journal-file.c',
         'sd-journal/journal-file.h',
@@ -97,8 +95,6 @@ libsystemd_sources = files(
         'sd-bus/bus-dump.h',
         'sd-bus/bus-error.c',
         'sd-bus/bus-error.h',
-        'sd-bus/bus-gvariant.c',
-        'sd-bus/bus-gvariant.h',
         'sd-bus/bus-internal.c',
         'sd-bus/bus-internal.h',
         'sd-bus/bus-introspect.c',
@@ -171,7 +167,8 @@ libsystemd_static = static_library(
         libsystemd_sources,
         include_directories : libsystemd_includes,
         c_args : libsystemd_c_args,
-        link_with : libbasic,
+        link_with : [libbasic,
+                     libbasic_compress],
         dependencies : [threads,
                         librt],
         build_by_default : false)
@@ -182,12 +179,13 @@ libsystemd_sym_path = meson.current_source_dir() / 'libsystemd.sym'
 static_libsystemd = get_option('static-libsystemd')
 static_libsystemd_pic = static_libsystemd == 'true' or static_libsystemd == 'pic'
 
-custom_target(
+libsystemd_pc = custom_target(
         'libsystemd.pc',
         input : 'libsystemd.pc.in',
         output : 'libsystemd.pc',
         command : [jinja2_cmdline, '@INPUT@', '@OUTPUT@'],
         install : pkgconfiglibdir != 'no',
+        install_tag : 'devel',
         install_dir : pkgconfiglibdir)
 
 ############################################################
@@ -206,19 +204,6 @@ tests += [
 
         [files('sd-journal/test-catalog.c')],
 
-        [files('sd-journal/test-compress.c'),
-         [],
-         [liblz4,
-          libzstd,
-          libxz]],
-
-        [files('sd-journal/test-compress-benchmark.c'),
-         [],
-         [liblz4,
-          libzstd,
-          libxz],
-         [], '', 'timeout=90'],
-
         [files('sd-journal/test-audit-type.c')],
 ]
 
@@ -235,7 +220,8 @@ tests += [
           libglib,
           libgobject,
           libgio,
-          libdbus]],
+          libdbus,
+          libm]],
 
         [files('sd-bus/test-bus-signature.c'),
          [],
@@ -273,12 +259,6 @@ tests += [
 
         [files('sd-bus/test-bus-vtable.c',
                'sd-bus/test-vtable-data.h')],
-
-        [files('sd-bus/test-bus-gvariant.c'),
-         [],
-         [libglib,
-          libgobject,
-          libgio]],
 
         [files('sd-bus/test-bus-creds.c')],
 

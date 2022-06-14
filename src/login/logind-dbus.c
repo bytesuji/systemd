@@ -1515,32 +1515,20 @@ static int have_multiple_sessions(
 static int bus_manager_log_shutdown(
                 Manager *m,
                 const HandleActionData *a) {
-
-        const char *message, *log_message;
-
         assert(m);
         assert(a);
 
-        message = a->message;
-        log_message = a->log_message;
-
-        if (message)
-                message = strjoina("MESSAGE=", message);
-        else
-                message = "MESSAGE=System is shutting down";
-
-        if (isempty(m->wall_message))
-                message = strjoina(message, ".");
-        else
-                message = strjoina(message, " (", m->wall_message, ").");
-
-        if (log_message)
-                log_message = strjoina("SHUTDOWN=", log_message);
+        const char *message = a->message ?: "System is shutting down";
+        const char *log_verb = a->log_verb ? strjoina("SHUTDOWN=", a->log_verb) : NULL;
 
         return log_struct(LOG_NOTICE,
-                        "MESSAGE_ID=%s", a->message_id ? a->message_id : SD_MESSAGE_SHUTDOWN_STR,
-                        message,
-                        log_message);
+                          "MESSAGE_ID=%s", a->message_id ?: SD_MESSAGE_SHUTDOWN_STR,
+                          LOG_MESSAGE("%s%s%s%s.",
+                                      message,
+                                      m->wall_message ? " (" : "",
+                                      strempty(m->wall_message),
+                                      m->wall_message ? ")" : ""),
+                          log_verb);
 }
 
 static int lid_switch_ignore_handler(sd_event_source *e, uint64_t usec, void *userdata) {
@@ -1900,9 +1888,11 @@ static int method_do_shutdown_or_sleep(
                 if (r < 0)
                         return r;
                 if ((flags & ~SD_LOGIND_SHUTDOWN_AND_SLEEP_FLAGS_PUBLIC) != 0)
-                        return sd_bus_error_set(error, SD_BUS_ERROR_INVALID_ARGS, "Invalid flags parameter");
+                        return sd_bus_error_set(error, SD_BUS_ERROR_INVALID_ARGS,
+                                                "Invalid flags parameter");
                 if (a->handle != HANDLE_REBOOT && (flags & SD_LOGIND_REBOOT_VIA_KEXEC))
-                        return sd_bus_error_set(error, SD_BUS_ERROR_INVALID_ARGS, "Reboot via kexec is only applicable with reboot operations");
+                        return sd_bus_error_set(error, SD_BUS_ERROR_INVALID_ARGS,
+                                                "Reboot via kexec is only applicable with reboot operations");
         } else {
                 /* Old style method: no flags parameter, but interactive bool passed as boolean in
                  * payload. Let's convert this argument to the new-style flags parameter for our internal
@@ -1931,7 +1921,8 @@ static int method_do_shutdown_or_sleep(
                                                 "Not enough swap space for hibernation");
                 if (r == 0)
                         return sd_bus_error_setf(error, BUS_ERROR_SLEEP_VERB_NOT_SUPPORTED,
-                                                 "Sleep verb \"%s\" not supported", sleep_operation_to_string(a->sleep_operation));
+                                                 "Sleep verb \"%s\" not supported",
+                                                 sleep_operation_to_string(a->sleep_operation));
                 if (r < 0)
                         return r;
         }
@@ -2354,8 +2345,6 @@ static int method_cancel_scheduled_shutdown(sd_bus_message *message, void *userd
         if (r == 0)
                 return 1; /* No authorization for now, but the async polkit stuff will call us again when it has it */
 
-        reset_scheduled_shutdown(m);
-
         if (m->enable_wall_messages) {
                 _cleanup_(sd_bus_creds_unrefp) sd_bus_creds *creds = NULL;
                 _cleanup_free_ char *username = NULL;
@@ -2369,9 +2358,11 @@ static int method_cancel_scheduled_shutdown(sd_bus_message *message, void *userd
                 }
 
                 username = uid_to_name(uid);
-                utmp_wall("The system shutdown has been cancelled",
+                utmp_wall("System shutdown has been cancelled",
                           username, tty, logind_wall_tty_filter, m);
         }
+
+        reset_scheduled_shutdown(m);
 
         return sd_bus_reply_method_return(message, "b", true);
 }
@@ -2794,7 +2785,7 @@ static int property_get_reboot_to_boot_loader_menu(
 
         r = getenv_bool("SYSTEMD_REBOOT_TO_BOOT_LOADER_MENU");
         if (r == -ENXIO) {
-                /* EFI case: returns the current value of LoaderConfigTimeoutOneShot. Three cases are distuingished:
+                /* EFI case: returns the current value of LoaderConfigTimeoutOneShot. Three cases are distinguished:
                  *
                  *     1. Variable not set, boot into boot loader menu is not enabled (we return UINT64_MAX to the user)
                  *     2. Variable set to "0", boot into boot loader menu is enabled with no timeout (we return 0 to the user)

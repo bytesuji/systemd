@@ -3,6 +3,8 @@
 conf.set10('ENABLE_EFI', get_option('efi'))
 conf.set10('HAVE_GNU_EFI', false)
 
+efi_config_h_dir = meson.current_build_dir()
+
 if not get_option('efi') or get_option('gnu-efi') == 'false'
         if get_option('gnu-efi') == 'true'
                 error('gnu-efi support requested, but general efi support is disabled')
@@ -185,13 +187,14 @@ efi_cflags = cc.get_supported_arguments(
         ]
 ) + [
         '-nostdlib',
-        '-std=gnu99',
+        '-std=gnu11',
         '-ffreestanding',
         '-fshort-wchar',
         '-fvisibility=hidden',
         '-isystem', efi_incdir,
         '-isystem', efi_incdir / efi_arch[1],
         '-I', fundamental_path,
+        '-I', meson.current_source_dir(),
         '-DSD_BOOT',
         '-DGNU_EFI_USE_MS_ABI',
         '-include', efi_config_h,
@@ -221,7 +224,7 @@ if get_option('b_ndebug') == 'true' or (
         efi_cflags += ['-DNDEBUG']
 endif
 if get_option('b_lto')
-        efi_cflags += ['-flto']
+        efi_cflags += cc.has_argument('-flto=auto') ? ['-flto=auto'] : ['-flto']
 endif
 
 foreach arg : get_option('c_args')
@@ -329,6 +332,7 @@ efi_headers = files(
         'devicetree.h',
         'disk.h',
         'drivers.h',
+        'efi-string.h',
         'graphics.h',
         'initrd.h',
         'linux.h',
@@ -348,7 +352,9 @@ common_sources = files(
         'assert.c',
         'devicetree.c',
         'disk.c',
+        'efi-string.c',
         'graphics.c',
+        'initrd.c',
         'measure.c',
         'pe.c',
         'secure-boot.c',
@@ -367,7 +373,6 @@ systemd_boot_sources = files(
 
 stub_sources = files(
         'cpio.c',
-        'initrd.c',
         'splash.c',
         'stub.c',
 )
@@ -378,18 +383,22 @@ else
         stub_sources += files('linux.c')
 endif
 
+tests += [
+        [files('test-efi-string.c', 'efi-string.c')],
+]
+
 # BCD parser only makes sense on arches that Windows supports.
 if efi_arch[1] in ['ia32', 'x86_64', 'arm', 'aarch64']
         systemd_boot_sources += files('bcd.c')
         tests += [
-                [files('test-bcd.c'),
+                [files('test-bcd.c', 'efi-string.c'),
                  [],
                  [libzstd],
                  [],
                  'HAVE_ZSTD'],
         ]
         fuzzers += [
-                [files('fuzz-bcd.c')],
+                [files('fuzz-bcd.c', 'efi-string.c')],
         ]
 endif
 
@@ -410,8 +419,8 @@ foreach file : fundamental_source_paths + common_sources + systemd_boot_sources 
         endif
 endforeach
 
-foreach tuple : [['systemd-boot@0@.@1@', systemd_boot_objects, false],
-                 ['linux@0@.@1@.stub', stub_objects, true]]
+foreach tuple : [['systemd-boot@0@.@1@', systemd_boot_objects, false, 'systemd-boot'],
+                 ['linux@0@.@1@.stub', stub_objects, true, 'systemd-stub']]
         elf = custom_target(
                 tuple[0].format(efi_arch[0], 'elf'),
                 input : tuple[1],
@@ -425,9 +434,10 @@ foreach tuple : [['systemd-boot@0@.@1@', systemd_boot_objects, false],
                            '-lgnuefi',
                            '-lgcc'],
                 install : tuple[2],
+                install_tag: tuple[3],
                 install_dir : bootlibdir)
 
-        custom_target(
+        efi = custom_target(
                 tuple[0].format(efi_arch[0], 'efi'),
                 input : elf,
                 output : tuple[0].format(efi_arch[0], 'efi'),
@@ -446,5 +456,8 @@ foreach tuple : [['systemd-boot@0@.@1@', systemd_boot_objects, false],
                            efi_format,
                            '@INPUT@', '@OUTPUT@'],
                 install : true,
+                install_tag: tuple[3],
                 install_dir : bootlibdir)
+
+        alias_target(tuple[3], efi)
 endforeach

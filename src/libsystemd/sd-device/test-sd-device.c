@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
 
+#include <ctype.h>
 #include <fcntl.h>
 
 #include "device-enumerator-private.h"
@@ -65,7 +66,11 @@ static void test_sd_device_one(sd_device *d) {
                 assert_se(r == -ENOENT);
 
         r = sd_device_get_subsystem(d, &subsystem);
-        if (r >= 0) {
+        if (r < 0)
+                assert_se(r == -ENOENT);
+        else if (!streq(subsystem, "gpio")) { /* Unfortunately, there exist /sys/class/gpio and /sys/bus/gpio.
+                                               * Hence, sd_device_new_from_subsystem_sysname() and
+                                               * sd_device_new_from_device_id() may not work as expected. */
                 const char *name, *id;
 
                 if (streq(subsystem, "drivers"))
@@ -101,8 +106,7 @@ static void test_sd_device_one(sd_device *d) {
 
                 r = sd_device_get_property_value(d, "ID_NET_DRIVER", &val);
                 assert_se(r >= 0 || r == -ENOENT);
-        } else
-                assert_se(r == -ENOENT);
+        }
 
         is_block = streq_ptr(subsystem, "block");
 
@@ -163,7 +167,13 @@ static void test_sd_device_one(sd_device *d) {
         assert_se(r >= 0 || r == -ENOENT);
 
         r = sd_device_get_sysnum(d, &val);
-        assert_se(r >= 0 || r == -ENOENT);
+        if (r >= 0) {
+                assert_se(val > sysname);
+                assert_se(val < sysname + strlen(sysname));
+                assert_se(in_charset(val, DIGITS));
+                assert_se(!isdigit(val[-1]));
+        } else
+                assert_se(r == -ENOENT);
 
         r = sd_device_get_sysattr_value(d, "name_assign_type", &val);
         assert_se(r >= 0 || ERRNO_IS_PRIVILEGE(r) || IN_SET(r, -ENOENT, -EINVAL));
@@ -175,6 +185,13 @@ TEST(sd_device_enumerator_devices) {
 
         assert_se(sd_device_enumerator_new(&e) >= 0);
         assert_se(sd_device_enumerator_allow_uninitialized(e) >= 0);
+        /* On some CI environments, it seems some loop block devices and corresponding bdi devices sometimes
+         * disappear during running this test. Let's exclude them here for stability. */
+        assert_se(sd_device_enumerator_add_match_subsystem(e, "bdi", false) >= 0);
+        assert_se(sd_device_enumerator_add_nomatch_sysname(e, "loop*") >= 0);
+        /* On CentOS CI, systemd-networkd-tests.py may be running when this test is invoked. The networkd
+         * test creates and removes many network interfaces, and may interfere with this test. */
+        assert_se(sd_device_enumerator_add_match_subsystem(e, "net", false) >= 0);
         FOREACH_DEVICE(e, d)
                 test_sd_device_one(d);
 }
@@ -201,6 +218,7 @@ static void test_sd_device_enumerator_filter_subsystem_one(
 
         assert_se(sd_device_enumerator_new(&e) >= 0);
         assert_se(sd_device_enumerator_add_match_subsystem(e, subsystem, true) >= 0);
+        assert_se(sd_device_enumerator_add_nomatch_sysname(e, "loop*") >= 0);
 
         FOREACH_DEVICE(e, d) {
                 const char *syspath;
@@ -243,6 +261,10 @@ TEST(sd_device_enumerator_filter_subsystem) {
 
         assert_se(subsystems = hashmap_new(&string_hash_ops));
         assert_se(sd_device_enumerator_new(&e) >= 0);
+        /* See comments in TEST(sd_device_enumerator_devices). */
+        assert_se(sd_device_enumerator_add_match_subsystem(e, "bdi", false) >= 0);
+        assert_se(sd_device_enumerator_add_nomatch_sysname(e, "loop*") >= 0);
+        assert_se(sd_device_enumerator_add_match_subsystem(e, "net", false) >= 0);
 
         FOREACH_DEVICE(e, d) {
                 const char *syspath, *subsystem;

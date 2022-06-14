@@ -692,34 +692,6 @@ int parse_ip_prefix_length(const char *s, int *ret) {
         return 0;
 }
 
-int parse_dev(const char *s, dev_t *ret) {
-        const char *major;
-        unsigned x, y;
-        size_t n;
-        int r;
-
-        n = strspn(s, DIGITS);
-        if (n == 0)
-                return -EINVAL;
-        if (s[n] != ':')
-                return -EINVAL;
-
-        major = strndupa_safe(s, n);
-        r = safe_atou(major, &x);
-        if (r < 0)
-                return r;
-
-        r = safe_atou(s + n + 1, &y);
-        if (r < 0)
-                return r;
-
-        if (!DEVICE_MAJOR_VALID(x) || !DEVICE_MINOR_VALID(y))
-                return -ERANGE;
-
-        *ret = makedev(x, y);
-        return 0;
-}
-
 int parse_oom_score_adjust(const char *s, int *ret) {
         int r, v;
 
@@ -777,4 +749,39 @@ int parse_loadavg_fixed_point(const char *s, loadavg_t *ret) {
                 return r;
 
         return store_loadavg_fixed_point(i, f, ret);
+}
+
+static bool nft_first_char_bad(const char c) {
+        if ((c >= 'a' && c <= 'z') ||
+            (c >= 'A' && c <= 'Z'))
+                return false;
+        return true;
+}
+
+static bool nft_next_char_bad(const char c) {
+        if ((c >= 'a' && c <= 'z') ||
+            (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') ||
+            c == '/' || c == '\\' || c == '_' || c == '.')
+                return false;
+        return true;
+}
+
+/* Limitations are described in https://www.netfilter.org/projects/nftables/manpage.html and
+ * https://bugzilla.netfilter.org/show_bug.cgi?id=1175 */
+bool nft_identifier_bad(const char *id) {
+        assert(id);
+
+        size_t len;
+        len = strlen(id);
+        if (len == 0 || len > 31)
+                return true;
+
+        if (nft_first_char_bad(id[0]))
+                return true;
+
+        for (size_t i = 1; i < len; i++)
+                if (nft_next_char_bad(id[i]))
+                        return true;
+        return false;
 }

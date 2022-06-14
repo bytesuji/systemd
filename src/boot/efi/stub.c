@@ -34,7 +34,7 @@ static EFI_STATUS combine_initrd(
 
         /* Combines four initrds into one, by simple concatenation in memory */
 
-        n = ALIGN_TO(initrd_size, 4); /* main initrd might not be padded yet */
+        n = ALIGN4(initrd_size); /* main initrd might not be padded yet */
         if (credential_initrd) {
                 if (n > UINTN_MAX - credential_initrd_size)
                         return EFI_OUT_OF_RESOURCES;
@@ -68,28 +68,28 @@ static EFI_STATUS combine_initrd(
 
                 /* Order matters, the real initrd must come first, since it might include microcode updates
                  * which the kernel only looks for in the first cpio archive */
-                CopyMem(p, PHYSICAL_ADDRESS_TO_POINTER(initrd_base), initrd_size);
+                memcpy(p, PHYSICAL_ADDRESS_TO_POINTER(initrd_base), initrd_size);
                 p += initrd_size;
 
-                pad = ALIGN_TO(initrd_size, 4) - initrd_size;
+                pad = ALIGN4(initrd_size) - initrd_size;
                 if (pad > 0)  {
-                        ZeroMem(p, pad);
+                        memset(p, 0, pad);
                         p += pad;
                 }
         }
 
         if (credential_initrd) {
-                CopyMem(p, credential_initrd, credential_initrd_size);
+                memcpy(p, credential_initrd, credential_initrd_size);
                 p += credential_initrd_size;
         }
 
         if (global_credential_initrd) {
-                CopyMem(p, global_credential_initrd, global_credential_initrd_size);
+                memcpy(p, global_credential_initrd, global_credential_initrd_size);
                 p += global_credential_initrd_size;
         }
 
         if (sysext_initrd) {
-                CopyMem(p, sysext_initrd, sysext_initrd_size);
+                memcpy(p, sysext_initrd, sysext_initrd_size);
                 p += sysext_initrd_size;
         }
 
@@ -131,14 +131,14 @@ static void export_variables(EFI_LOADED_IMAGE *loaded_image) {
         /* if LoaderFirmwareInfo is not set, let's set it */
         if (efivar_get_raw(LOADER_GUID, L"LoaderFirmwareInfo", NULL, NULL) != EFI_SUCCESS) {
                 _cleanup_freepool_ CHAR16 *s = NULL;
-                s = xpool_print(L"%s %d.%02d", ST->FirmwareVendor, ST->FirmwareRevision >> 16, ST->FirmwareRevision & 0xffff);
+                s = xpool_print(L"%s %u.%02u", ST->FirmwareVendor, ST->FirmwareRevision >> 16, ST->FirmwareRevision & 0xffff);
                 efivar_set(LOADER_GUID, L"LoaderFirmwareInfo", s, 0);
         }
 
         /* ditto for LoaderFirmwareType */
         if (efivar_get_raw(LOADER_GUID, L"LoaderFirmwareType", NULL, NULL) != EFI_SUCCESS) {
                 _cleanup_freepool_ CHAR16 *s = NULL;
-                s = xpool_print(L"UEFI %d.%02d", ST->Hdr.Revision >> 16, ST->Hdr.Revision & 0xffff);
+                s = xpool_print(L"UEFI %u.%02u", ST->Hdr.Revision >> 16, ST->Hdr.Revision & 0xffff);
                 efivar_set(LOADER_GUID, L"LoaderFirmwareType", s, 0);
         }
 
@@ -214,7 +214,7 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *sys_table) {
         if ((!secure_boot_enabled() || cmdline_len == 0) && loaded_image->LoadOptionsSize > 0 &&
             *(CHAR16 *) loaded_image->LoadOptions > 0x1F) {
                 cmdline_len = (loaded_image->LoadOptionsSize / sizeof(CHAR16)) * sizeof(CHAR8);
-                cmdline = cmdline_owned = xallocate_pool(cmdline_len);
+                cmdline = cmdline_owned = xmalloc(cmdline_len);
 
                 for (UINTN i = 0; i < cmdline_len; i++)
                         cmdline[i] = ((CHAR16 *) loaded_image->LoadOptions)[i];

@@ -9,7 +9,6 @@
 set -e
 
 TEST_DESCRIPTION="systemd-udev storage tests"
-IMAGE_NAME="default"
 TEST_NO_NSPAWN=1
 # Save only journals of failing test cases by default (to conserve space)
 TEST_SAVE_JOURNAL="${TEST_SAVE_JOURNAL:-fail}"
@@ -42,6 +41,9 @@ _host_has_feature() {(
         lvm)
             command -v lvm || return $?
             ;;
+        mdadm)
+            command -v mdadm || return $?
+            ;;
         multipath)
             command -v multipath && command -v multipathd || return $?
             ;;
@@ -64,6 +66,7 @@ test_append_files() {(
         [btrfs]=install_btrfs
         [iscsi]=install_iscsi
         [lvm]=install_lvm
+        [mdadm]=install_mdadm
         [multipath]=install_multipath
     )
 
@@ -97,7 +100,7 @@ test_run_one() {
     local test_id="${1:?}"
 
     if run_qemu "$test_id"; then
-        check_result_qemu || { echo "QEMU test failed"; return 1; }
+        check_result_qemu || { echo "qemu test failed"; return 1; }
     fi
 
     return 0
@@ -113,7 +116,7 @@ test_run() {
     mount_initdir
 
     if get_bool "${TEST_NO_QEMU:=}" || ! find_qemu_bin; then
-        dwarn "can't run QEMU, skipping"
+        dwarn "can't run qemu, skipping"
         return 0
     fi
 
@@ -444,6 +447,57 @@ EOF
     rm -f "${testdisk:?}"
 }
 
+testcase_mdadm_basic() {
+    if ! _host_has_feature "mdadm"; then
+        echo "Missing mdadm tools/modules, skipping the test..."
+        return 77
+    fi
+
+    local qemu_opts=("-device ahci,id=ahci0")
+    local diskpath i size
+
+    for i in {0..4}; do
+        diskpath="${TESTDIR:?}/mdadmbasic${i}.img"
+
+        dd if=/dev/zero of="$diskpath" bs=1M count=64
+        qemu_opts+=(
+            "-device ide-hd,bus=ahci0.$i,drive=drive$i,model=foobar,serial=deadbeefmdadm$i"
+            "-drive format=raw,cache=unsafe,file=$diskpath,if=none,id=drive$i"
+        )
+    done
+
+    KERNEL_APPEND="systemd.setenv=TEST_FUNCTION_NAME=${FUNCNAME[0]} ${USER_KERNEL_APPEND:-}"
+    QEMU_OPTIONS="${qemu_opts[*]} ${USER_QEMU_OPTIONS:-}"
+    test_run_one "${1:?}" || return $?
+
+    rm -f "${TESTDIR:?}"/mdadmbasic*.img
+}
+
+testcase_mdadm_lvm() {
+    if ! _host_has_feature "mdadm" || ! _host_has_feature "lvm"; then
+        echo "Missing mdadm tools/modules or LVM tools, skipping the test..."
+        return 77
+    fi
+
+    local qemu_opts=("-device ahci,id=ahci0")
+    local diskpath i size
+
+    for i in {0..4}; do
+        diskpath="${TESTDIR:?}/mdadmlvm${i}.img"
+
+        dd if=/dev/zero of="$diskpath" bs=1M count=64
+        qemu_opts+=(
+            "-device ide-hd,bus=ahci0.$i,drive=drive$i,model=foobar,serial=deadbeefmdadmlvm$i"
+            "-drive format=raw,cache=unsafe,file=$diskpath,if=none,id=drive$i"
+        )
+    done
+
+    KERNEL_APPEND="systemd.setenv=TEST_FUNCTION_NAME=${FUNCNAME[0]} ${USER_KERNEL_APPEND:-}"
+    QEMU_OPTIONS="${qemu_opts[*]} ${USER_QEMU_OPTIONS:-}"
+    test_run_one "${1:?}" || return $?
+
+    rm -f "${TESTDIR:?}"/mdadmlvm*.img
+}
 # Allow overriding which tests should be run from the "outside", useful for manual
 # testing (make -C test/... TESTCASES="testcase1 testcase2")
 if [[ -v "TESTCASES" && -n "$TESTCASES" ]]; then

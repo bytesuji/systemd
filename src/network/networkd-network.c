@@ -383,6 +383,7 @@ int network_load_one(Manager *manager, OrderedHashmap **networks, const char *fi
                 .required_for_online = -1,
                 .required_operstate_for_online = LINK_OPERSTATE_RANGE_DEFAULT,
                 .activation_policy = _ACTIVATION_POLICY_INVALID,
+                .group = -1,
                 .arp = -1,
                 .multicast = -1,
                 .allmulticast = -1,
@@ -591,28 +592,6 @@ int network_load(Manager *manager, OrderedHashmap **networks) {
         return 0;
 }
 
-static bool stats_by_path_equal(Hashmap *a, Hashmap *b) {
-        struct stat *st_a, *st_b;
-        const char *path;
-
-        assert(a);
-        assert(b);
-
-        if (hashmap_size(a) != hashmap_size(b))
-                return false;
-
-        HASHMAP_FOREACH_KEY(st_a, path, a) {
-                st_b = hashmap_get(b, path);
-                if (!st_b)
-                        return false;
-
-                if (!stat_inode_unmodified(st_a, st_b))
-                        return false;
-        }
-
-        return true;
-}
-
 int network_reload(Manager *manager) {
         OrderedHashmap *new_networks = NULL;
         Network *n, *old;
@@ -709,6 +688,10 @@ static Network *network_free(Network *network) {
         free(network->dhcp6_mudurl);
         strv_free(network->dhcp6_user_class);
         strv_free(network->dhcp6_vendor_class);
+        set_free(network->dhcp_netlabels);
+        set_free(network->dhcp6_netlabels);
+        nft_set_context_free_many(network->dhcp_nft_set_context, &network->n_dhcp_nft_set_contexts);
+        nft_set_context_free_many(network->dhcp6_nft_set_context, &network->n_dhcp6_nft_set_contexts);
 
         strv_free(network->ntp);
         for (unsigned i = 0; i < network->n_dns; i++)
@@ -775,6 +758,10 @@ static Network *network_free(Network *network) {
         ordered_hashmap_free(network->dhcp6_client_send_vendor_options);
         set_free(network->dhcp_pd_tokens);
         set_free(network->ndisc_tokens);
+        set_free(network->dhcp_pd_netlabels);
+        set_free(network->ndisc_netlabels);
+        nft_set_context_free_many(network->dhcp_pd_nft_set_context, &network->n_dhcp_pd_nft_set_contexts);
+        nft_set_context_free_many(network->ndisc_nft_set_context, &network->n_ndisc_nft_set_contexts);
 
         return mfree(network);
 }
@@ -1317,6 +1304,90 @@ int config_parse_ignore_carrier_loss(
         network->ignore_carrier_loss_set = true;
         network->ignore_carrier_loss_usec = usec;
         return 0;
+}
+
+int config_parse_dhcp_nft_set_context(
+                const char *unit,
+                const char *filename,
+                unsigned line,
+                const char *section,
+                unsigned section_line,
+                const char *lvalue,
+                int ltype,
+                const char *rvalue,
+                void *data,
+                void *userdata) {
+        Network *network = userdata;
+
+        assert(filename);
+        assert(lvalue);
+        assert(rvalue);
+        assert(network);
+
+        return config_parse_nft_set_context(unit, filename, line, section, section_line, lvalue, ltype, rvalue, &network->dhcp_nft_set_context, &network->n_dhcp_nft_set_contexts);
+}
+
+int config_parse_dhcp6_nft_set_context(
+                const char *unit,
+                const char *filename,
+                unsigned line,
+                const char *section,
+                unsigned section_line,
+                const char *lvalue,
+                int ltype,
+                const char *rvalue,
+                void *data,
+                void *userdata) {
+        Network *network = userdata;
+
+        assert(filename);
+        assert(lvalue);
+        assert(rvalue);
+        assert(network);
+
+        return config_parse_nft_set_context(unit, filename, line, section, section_line, lvalue, ltype, rvalue, &network->dhcp6_nft_set_context, &network->n_dhcp6_nft_set_contexts);
+}
+
+int config_parse_dhcp_pd_nft_set_context(
+                const char *unit,
+                const char *filename,
+                unsigned line,
+                const char *section,
+                unsigned section_line,
+                const char *lvalue,
+                int ltype,
+                const char *rvalue,
+                void *data,
+                void *userdata) {
+        Network *network = userdata;
+
+        assert(filename);
+        assert(lvalue);
+        assert(rvalue);
+        assert(network);
+
+        return config_parse_nft_set_context(unit, filename, line, section, section_line, lvalue, ltype, rvalue, &network->dhcp_pd_nft_set_context, &network->n_dhcp_pd_nft_set_contexts);
+}
+
+int config_parse_ndisc_nft_set_context(
+                const char *unit,
+                const char *filename,
+                unsigned line,
+                const char *section,
+                unsigned section_line,
+                const char *lvalue,
+                int ltype,
+                const char *rvalue,
+                void *data,
+                void *userdata) {
+        Network *network = userdata;
+
+        assert(filename);
+        assert(lvalue);
+        assert(rvalue);
+        assert(network);
+
+        return config_parse_nft_set_context(unit, filename, line, section, section_line, lvalue, ltype, rvalue, &network->ndisc_nft_set_context, &network->n_ndisc_nft_set_contexts);
 }
 
 DEFINE_CONFIG_PARSE_ENUM(config_parse_required_family_for_online, link_required_address_family, AddressFamily,

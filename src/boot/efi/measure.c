@@ -25,14 +25,15 @@ static EFI_STATUS tpm1_measure_to_pcr_and_event_log(
         assert(tcg);
         assert(description);
 
-        desc_len = StrSize(description);
-        tcg_event = xallocate_zero_pool(offsetof(TCG_PCR_EVENT, Event) + desc_len);
+        desc_len = strsize16(description);
+        tcg_event = xmalloc(offsetof(TCG_PCR_EVENT, Event) + desc_len);
+        memset(tcg_event, 0, offsetof(TCG_PCR_EVENT, Event) + desc_len);
         *tcg_event = (TCG_PCR_EVENT) {
                 .EventSize = desc_len,
                 .PCRIndex = pcrindex,
                 .EventType = EV_IPL,
         };
-        CopyMem(tcg_event->Event, description, desc_len);
+        memcpy(tcg_event->Event, description, desc_len);
 
         return tcg->HashLogExtendEvent(
                         (EFI_TCG *) tcg,
@@ -56,8 +57,9 @@ static EFI_STATUS tpm2_measure_to_pcr_and_event_log(
         assert(tcg);
         assert(description);
 
-        desc_len = StrSize(description);
-        tcg_event = xallocate_zero_pool(offsetof(EFI_TCG2_EVENT, Event) + desc_len);
+        desc_len = strsize16(description);
+        tcg_event = xmalloc(offsetof(EFI_TCG2_EVENT, Event) + desc_len);
+        memset(tcg_event, 0, offsetof(EFI_TCG2_EVENT, Event) + desc_len);
         *tcg_event = (EFI_TCG2_EVENT) {
                 .Size = offsetof(EFI_TCG2_EVENT, Event) + desc_len,
                 .Header.HeaderSize = sizeof(EFI_TCG2_EVENT_HEADER),
@@ -66,7 +68,7 @@ static EFI_STATUS tpm2_measure_to_pcr_and_event_log(
                 .Header.EventType = EV_IPL,
         };
 
-        CopyMem(tcg_event->Event, description, desc_len);
+        memcpy(tcg_event->Event, description, desc_len);
 
         return tcg->HashLogExtendEvent(
                         tcg,
@@ -84,7 +86,7 @@ static EFI_TCG *tcg1_interface_check(void) {
         UINT32 features;
         EFI_TCG *tcg;
 
-        status = LibLocateProtocol((EFI_GUID*) EFI_TCG_GUID, (void **) &tcg);
+        status = BS->LocateProtocol((EFI_GUID *) EFI_TCG_GUID, NULL, (void **) &tcg);
         if (EFI_ERROR(status))
                 return NULL;
 
@@ -113,7 +115,7 @@ static EFI_TCG2 * tcg2_interface_check(void) {
         EFI_STATUS status;
         EFI_TCG2 *tcg;
 
-        status = LibLocateProtocol((EFI_GUID*) EFI_TCG2_GUID, (void **) &tcg);
+        status = BS->LocateProtocol((EFI_GUID *) EFI_TCG2_GUID, NULL, (void **) &tcg);
         if (EFI_ERROR(status))
                 return NULL;
 
@@ -171,7 +173,7 @@ EFI_STATUS tpm_log_load_options(const CHAR16 *load_options) {
 
                 err = tpm_log_event(pcr,
                                     POINTER_TO_PHYSICAL_ADDRESS(load_options),
-                                    StrSize(load_options), load_options);
+                                    strsize16(load_options), load_options);
                 if (EFI_ERROR(err))
                         return log_error_status_stall(err, L"Unable to add load options (i.e. kernel command) line measurement to PCR %u: %r", pcr, err);
         }

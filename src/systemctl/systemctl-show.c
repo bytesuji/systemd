@@ -298,12 +298,27 @@ static void format_active_state(const char *active_state, const char **active_on
                 *active_on = *active_off = "";
 }
 
+static void format_enable_state(const char *enable_state, const char **enable_on, const char **enable_off) {
+        assert(enable_on);
+        assert(enable_off);
+
+        if (streq_ptr(enable_state, "disabled")) {
+                *enable_on = ansi_highlight_yellow();
+                *enable_off = ansi_normal();
+        } else if (streq_ptr(enable_state, "enabled")) {
+                *enable_on = ansi_highlight_green();
+                *enable_off = ansi_normal();
+        } else
+                *enable_on = *enable_off = "";
+}
+
 static void print_status_info(
                 sd_bus *bus,
                 UnitStatusInfo *i,
                 bool *ellipsized) {
 
         const char *active_on, *active_off, *on, *off, *ss, *fs;
+        const char *enable_on, *enable_off, *enable_vendor_on, *enable_vendor_off;
         _cleanup_free_ char *formatted_path = NULL;
         usec_t timestamp;
         const char *path;
@@ -315,6 +330,8 @@ static void print_status_info(
          * printer */
 
         format_active_state(i->active_state, &active_on, &active_off);
+        format_enable_state(i->unit_file_state, &enable_on, &enable_off);
+        format_enable_state(i->unit_file_preset, &enable_vendor_on, &enable_vendor_off);
 
         const SpecialGlyph glyph = unit_active_state_to_glyph(unit_active_state_from_string(i->active_state));
 
@@ -345,12 +362,12 @@ static void print_status_info(
                 bool show_preset = !isempty(i->unit_file_preset) &&
                         show_preset_for_state(unit_file_state_from_string(i->unit_file_state));
 
-                printf("     Loaded: %s%s%s (%s; %s%s%s)\n",
+                printf("     Loaded: %s%s%s (%s; %s%s%s%s%s%s%s)\n",
                        on, strna(i->load_state), off,
                        path,
-                       i->unit_file_state,
+                       enable_on, i->unit_file_state, enable_off,
                        show_preset ? "; vendor preset: " : "",
-                       show_preset ? i->unit_file_preset : "");
+                       enable_vendor_on, show_preset ? i->unit_file_preset : "", enable_vendor_off);
 
         } else if (path)
                 printf("     Loaded: %s%s%s (%s)\n",
@@ -1437,7 +1454,6 @@ static int print_property(const char *name, const char *expected_value, sd_bus_m
                                 return bus_log_parse_error(r);
 
                         for (;;) {
-                                _cleanup_free_ char *str = NULL;
                                 uint32_t prefixlen;
                                 int32_t family;
                                 const void *ap;
@@ -1474,10 +1490,8 @@ static int print_property(const char *name, const char *expected_value, sd_bus_m
                                 if (prefixlen > FAMILY_ADDRESS_SIZE(family) * 8)
                                         continue;
 
-                                if (in_addr_prefix_to_string(family, (const union in_addr_union*) ap, prefixlen, &str) < 0)
-                                        continue;
-
-                                if (!strextend_with_separator(&addresses, " ", str))
+                                if (!strextend_with_separator(&addresses, " ",
+                                                              IN_ADDR_PREFIX_TO_STRING(family, ap, prefixlen)))
                                         return log_oom();
                         }
 
@@ -2053,6 +2067,7 @@ static int get_unit_dbus_path_by_pid(
 
 static int show_all(
                 sd_bus *bus,
+                SystemctlShowMode show_mode,
                 bool *new_line,
                 bool *ellipsized) {
 
@@ -2078,7 +2093,7 @@ static int show_all(
                 if (!p)
                         return log_oom();
 
-                r = show_one(bus, p, u->id, SYSTEMCTL_SHOW_STATUS, new_line, ellipsized);
+                r = show_one(bus, p, u->id, show_mode, new_line, ellipsized);
                 if (r < 0)
                         return r;
                 if (r > 0 && ret == 0)
@@ -2179,17 +2194,28 @@ int verb_show(int argc, char *argv[], void *userdata) {
 
         pager_open(arg_pager_flags);
 
-        /* If no argument is specified inspect the manager itself */
-        if (show_mode == SYSTEMCTL_SHOW_PROPERTIES && argc <= 1)
-                return show_one(bus, "/org/freedesktop/systemd1", NULL, show_mode, &new_line, &ellipsized);
+        if (argc <= 1) {
+                /* If no argument or filter is specified inspect the manager itself:
+                 * systemctl status → we show status of the manager
+                 * systemctl status --all → status of the manager + status of all units
+                 * systemctl status --state=… → status of units in listed states
+                 * systemctl status --type=… → status of units of listed types
+                 * systemctl status --failed → status of failed units, mirroring systemctl list-units --failed
+                 */
 
-        if (show_mode == SYSTEMCTL_SHOW_STATUS && argc <= 1) {
+                if (!arg_states && !arg_types) {
+                        if (show_mode == SYSTEMCTL_SHOW_PROPERTIES)
+                                r = show_one(bus, "/org/freedesktop/systemd1", NULL, show_mode, &new_line, &ellipsized);
+                        else
+                                r = show_system_status(bus);
+                        if (r < 0)
+                                return r;
 
-                show_system_status(bus);
-                new_line = true;
+                        new_line = true;
+                }
 
-                if (arg_all)
-                        ret = show_all(bus, &new_line, &ellipsized);
+                if (arg_all || arg_states || arg_types)
+                        ret = show_all(bus, show_mode, &new_line, &ellipsized);
         } else {
                 _cleanup_free_ char **patterns = NULL;
 

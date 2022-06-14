@@ -216,7 +216,7 @@ static void manager_print_jobs_in_progress(Manager *m) {
         unsigned counter = 0, print_nr;
         char cylon[6 + CYLON_BUFFER_EXTRA + 1];
         unsigned cylon_pos;
-        uint64_t x;
+        uint64_t timeout = 0;
 
         assert(m);
         assert(m->n_running_jobs > 0);
@@ -245,7 +245,7 @@ static void manager_print_jobs_in_progress(Manager *m) {
         if (m->n_running_jobs > 1)
                 xsprintf(job_of_n, "(%u of %u) ", counter, m->n_running_jobs);
 
-        bool have_timeout = job_get_timeout(j, &x) > 0;
+        (void) job_get_timeout(j, &timeout);
 
         /* We want to use enough information for the user to identify previous lines talking about the same
          * unit, but keep the message as short as possible. So if 'Starting foo.service' or 'Starting
@@ -255,7 +255,7 @@ static void manager_print_jobs_in_progress(Manager *m) {
         const char *ident = unit_status_string(j->unit, NULL);
 
         const char *time = FORMAT_TIMESPAN(now(CLOCK_MONOTONIC) - j->begin_usec, 1*USEC_PER_SEC);
-        const char *limit = have_timeout ? FORMAT_TIMESPAN(x - j->begin_usec, 1*USEC_PER_SEC) : "no limit";
+        const char *limit = timeout > 0 ? FORMAT_TIMESPAN(timeout - j->begin_usec, 1*USEC_PER_SEC) : "no limit";
 
         if (m->status_unit_format == STATUS_UNIT_FORMAT_DESCRIPTION)
                 /* When using 'Description', we effectively don't have enough space to show the nested status
@@ -777,9 +777,37 @@ static int manager_setup_sigchld_event_source(Manager *m) {
         return 0;
 }
 
+static int manager_find_credentials_dirs(Manager *m) {
+        const char *e;
+        int r;
+
+        assert(m);
+
+        r = get_credentials_dir(&e);
+        if (r < 0) {
+                if (r != -ENXIO)
+                        log_debug_errno(r, "Failed to determine credentials directory, ignoring: %m");
+        } else {
+                m->received_credentials_directory = strdup(e);
+                if (!m->received_credentials_directory)
+                        return -ENOMEM;
+        }
+
+        r = get_encrypted_credentials_dir(&e);
+        if (r < 0) {
+                if (r != -ENXIO)
+                        log_debug_errno(r, "Failed to determine encrypted credentials directory, ignoring: %m");
+        } else {
+                m->received_encrypted_credentials_directory = strdup(e);
+                if (!m->received_encrypted_credentials_directory)
+                        return -ENOMEM;
+        }
+
+        return 0;
+}
+
 int manager_new(LookupScope scope, ManagerTestRunFlags test_run_flags, Manager **_m) {
         _cleanup_(manager_freep) Manager *m = NULL;
-        const char *e;
         int r;
 
         assert(_m);
@@ -883,12 +911,9 @@ int manager_new(LookupScope scope, ManagerTestRunFlags test_run_flags, Manager *
         if (r < 0)
                 return r;
 
-        r = get_credentials_dir(&e);
-        if (r >= 0) {
-                m->received_credentials = strdup(e);
-                if (!m->received_credentials)
-                        return -ENOMEM;
-        }
+        r = manager_find_credentials_dirs(m);
+        if (r < 0)
+                return r;
 
         r = sd_event_default(&m->event);
         if (r < 0)
@@ -926,7 +951,7 @@ int manager_new(LookupScope scope, ManagerTestRunFlags test_run_flags, Manager *
                         return r;
 
 #if HAVE_LIBBPF
-                if (MANAGER_IS_SYSTEM(m) && lsm_bpf_supported()) {
+                if (MANAGER_IS_SYSTEM(m) && lsm_bpf_supported(/* initialize = */ true)) {
                         r = lsm_bpf_setup(m);
                         if (r < 0)
                                 log_warning_errno(r, "Failed to setup LSM BPF, ignoring: %m");
@@ -951,7 +976,7 @@ int manager_new(LookupScope scope, ManagerTestRunFlags test_run_flags, Manager *
 
         m->taint_usr =
                 !in_initrd() &&
-                dir_is_empty("/usr") > 0;
+                dir_is_empty("/usr", /* ignore_hidden_or_backup= */ false) > 0;
 
         /* Note that we do not set up the notify fd here. We do that after deserialization,
          * since they might have gotten serialized across the reexec. */
@@ -1533,7 +1558,8 @@ Manager* manager_free(Manager *m) {
 
         for (ExecDirectoryType dt = 0; dt < _EXEC_DIRECTORY_TYPE_MAX; dt++)
                 m->prefix[dt] = mfree(m->prefix[dt]);
-        free(m->received_credentials);
+        free(m->received_credentials_directory);
+        free(m->received_encrypted_credentials_directory);
 
         free(m->watchdog_pretimeout_governor);
         free(m->watchdog_pretimeout_governor_overridden);
@@ -3629,7 +3655,7 @@ static bool generator_path_any(const char* const* paths) {
 
         /* Optimize by skipping the whole process by not creating output directories
          * if no generators are found. */
-        STRV_FOREACH(path, (char**) paths)
+        STRV_FOREACH(path, paths)
                 if (access(*path, F_OK) == 0)
                         found = true;
                 else if (errno != ENOENT)
@@ -3665,9 +3691,67 @@ static int manager_run_environment_generators(Manager *m) {
         return r;
 }
 
+static int build_generator_environment(Manager *m, char ***ret) {
+        _cleanup_strv_free_ char **nl = NULL;
+        Virtualization v;
+        int r;
+
+        assert(m);
+        assert(ret);
+
+        /* Generators oftentimes want to know some basic facts about the environment they run in, in order to
+         * adjust generated units to that. Let's pass down some bits of information that are easy for us to
+         * determine (but a bit harder for generator scripts to determine), as environment variables. */
+
+        nl = strv_copy(m->transient_environment);
+        if (!nl)
+                return -ENOMEM;
+
+        r = strv_env_assign(&nl, "SYSTEMD_SCOPE", MANAGER_IS_SYSTEM(m) ? "system" : "user");
+        if (r < 0)
+                return r;
+
+        if (MANAGER_IS_SYSTEM(m)) {
+                /* Note that $SYSTEMD_IN_INITRD may be used to override the initrd detection in much of our
+                 * codebase. This is hence more than purely informational. It will shortcut detection of the
+                 * initrd state if generators invoke our own tools. But that's OK, as it would come to the
+                 * same results (hopefully). */
+                r = strv_env_assign(&nl, "SYSTEMD_IN_INITRD", one_zero(in_initrd()));
+                if (r < 0)
+                        return r;
+
+                if (m->first_boot >= 0) {
+                        r = strv_env_assign(&nl, "SYSTEMD_FIRST_BOOT", one_zero(m->first_boot));
+                        if (r < 0)
+                                return r;
+                }
+        }
+
+        v = detect_virtualization();
+        if (v < 0)
+                log_debug_errno(v, "Failed to detect virtualization, ignoring: %m");
+        else if (v > 0) {
+                const char *s;
+
+                s = strjoina(VIRTUALIZATION_IS_VM(v) ? "vm:" :
+                             VIRTUALIZATION_IS_CONTAINER(v) ? "container:" : ":",
+                             virtualization_to_string(v));
+
+                r = strv_env_assign(&nl, "SYSTEMD_VIRTUALIZATION", s);
+                if (r < 0)
+                        return r;
+        }
+
+        r = strv_env_assign(&nl, "SYSTEMD_ARCHITECTURE", architecture_to_string(uname_architecture()));
+        if (r < 0)
+                return r;
+
+        *ret = TAKE_PTR(nl);
+        return 0;
+}
+
 static int manager_run_generators(Manager *m) {
-        _cleanup_strv_free_ char **paths = NULL;
-        const char *argv[5];
+        _cleanup_strv_free_ char **paths = NULL, **ge = NULL;
         int r;
 
         assert(m);
@@ -3688,16 +3772,28 @@ static int manager_run_generators(Manager *m) {
                 goto finish;
         }
 
-        argv[0] = NULL; /* Leave this empty, execute_directory() will fill something in */
-        argv[1] = m->lookup_paths.generator;
-        argv[2] = m->lookup_paths.generator_early;
-        argv[3] = m->lookup_paths.generator_late;
-        argv[4] = NULL;
+        const char *argv[] = {
+                NULL, /* Leave this empty, execute_directory() will fill something in */
+                m->lookup_paths.generator,
+                m->lookup_paths.generator_early,
+                m->lookup_paths.generator_late,
+                NULL,
+        };
+
+        r = build_generator_environment(m, &ge);
+        if (r < 0) {
+                log_error_errno(r, "Failed to build generator environment: %m");
+                goto finish;
+        }
 
         RUN_WITH_UMASK(0022)
-                (void) execute_directories((const char* const*) paths, DEFAULT_TIMEOUT_USEC, NULL, NULL,
-                                           (char**) argv, m->transient_environment,
-                                           EXEC_DIR_PARALLEL | EXEC_DIR_IGNORE_ERRORS | EXEC_DIR_SET_SYSTEMD_EXEC_PID);
+                (void) execute_directories(
+                                (const char* const*) paths,
+                                DEFAULT_TIMEOUT_USEC,
+                                /* callbacks= */ NULL, /* callback_args= */ NULL,
+                                (char**) argv,
+                                ge,
+                                EXEC_DIR_PARALLEL | EXEC_DIR_IGNORE_ERRORS | EXEC_DIR_SET_SYSTEMD_EXEC_PID);
 
         r = 0;
 

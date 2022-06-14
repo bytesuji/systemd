@@ -73,7 +73,7 @@ static int managed_journal_file_entry_array_punch_hole(JournalFile *f, uint64_t 
         if (sz < MINIMUM_HOLE_SIZE)
                 return 0;
 
-        if (p == le64toh(f->header->tail_object_offset) && !f->seal) {
+        if (p == le64toh(f->header->tail_object_offset) && !JOURNAL_HEADER_SEALED(f->header)) {
                 ssize_t n;
 
                 o.object.size = htole64(offset - p);
@@ -93,10 +93,9 @@ static int managed_journal_file_entry_array_punch_hole(JournalFile *f, uint64_t 
         }
 
         if (fallocate(f->fd, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE, offset, sz) < 0) {
-                if (ERRNO_IS_NOT_SUPPORTED(errno)) {
-                        log_debug("Hole punching not supported by backing file system, skipping.");
-                        return -EOPNOTSUPP; /* Make recognizable */
-                }
+                if (ERRNO_IS_NOT_SUPPORTED(errno))
+                        return log_debug_errno(SYNTHETIC_ERRNO(EOPNOTSUPP), /* Make recognizable */
+                                               "Hole punching not supported by backing file system, skipping.");
 
                 return log_debug_errno(errno, "Failed to punch hole in entry array of %s: %m", f->path);
         }
@@ -292,7 +291,7 @@ int managed_journal_file_set_offline(ManagedJournalFile *f, bool wait) {
 
         assert(f);
 
-        if (!f->file->writable)
+        if (!journal_file_writable(f->file))
                 return -EPERM;
 
         if (f->file->fd < 0 || !f->file->header)
@@ -367,7 +366,7 @@ ManagedJournalFile* managed_journal_file_close(ManagedJournalFile *f) {
 
 #if HAVE_GCRYPT
         /* Write the final tag */
-        if (f->file->seal && f->file->writable) {
+        if (JOURNAL_HEADER_SEALED(f->file->header) && journal_file_writable(f->file)) {
                 int r;
 
                 r = journal_file_append_tag(f->file);

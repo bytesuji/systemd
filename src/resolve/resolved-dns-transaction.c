@@ -333,7 +333,6 @@ static void dns_transaction_shuffle_id(DnsTransaction *t) {
 }
 
 static void dns_transaction_tentative(DnsTransaction *t, DnsPacket *p) {
-        _cleanup_free_ char *pretty = NULL;
         char key_str[DNS_RESOURCE_KEY_STRING_MAX];
         DnsZoneItem *z;
 
@@ -344,15 +343,13 @@ static void dns_transaction_tentative(DnsTransaction *t, DnsPacket *p) {
         if (manager_packet_from_local_address(t->scope->manager, p) != 0)
                 return;
 
-        (void) in_addr_to_string(p->family, &p->sender, &pretty);
-
         log_debug("Transaction %" PRIu16 " for <%s> on scope %s on %s/%s got tentative packet from %s.",
                   t->id,
                   dns_resource_key_to_string(dns_transaction_key(t), key_str, sizeof key_str),
                   dns_protocol_to_string(t->scope->protocol),
                   t->scope->link ? t->scope->link->ifname : "*",
                   af_to_name_short(t->scope->family),
-                  strnull(pretty));
+                  IN_ADDR_TO_STRING(p->family, &p->sender));
 
         /* RFC 4795, Section 4.1 says that the peer with the
          * lexicographically smaller IP address loses */
@@ -394,7 +391,8 @@ void dns_transaction_complete(DnsTransaction *t, DnsTransactionState state) {
 
                 log_struct(LOG_NOTICE,
                            "MESSAGE_ID=" SD_MESSAGE_DNSSEC_FAILURE_STR,
-                           LOG_MESSAGE("DNSSEC validation failed for question %s: %s", key_str, dnssec_result_to_string(t->answer_dnssec_result)),
+                           LOG_MESSAGE("DNSSEC validation failed for question %s: %s",
+                                       key_str, dnssec_result_to_string(t->answer_dnssec_result)),
                            "DNS_TRANSACTION=%" PRIu16, t->id,
                            "DNS_QUESTION=%s", key_str,
                            "DNSSEC_RESULT=%s", dnssec_result_to_string(t->answer_dnssec_result),
@@ -1096,10 +1094,8 @@ void dns_transaction_process_reply(DnsTransaction *t, DnsPacket *p, bool encrypt
                 assert_not_reached();
         }
 
-        if (t->received != p) {
-                dns_packet_unref(t->received);
-                t->received = dns_packet_ref(p);
-        }
+        if (t->received != p)
+                DNS_PACKET_REPLACE(t->received, dns_packet_ref(p));
 
         t->answer_source = DNS_TRANSACTION_NETWORK;
 
@@ -1364,8 +1360,7 @@ void dns_transaction_process_reply(DnsTransaction *t, DnsPacket *p, bool encrypt
          * field is later replaced by the DNSSEC validated subset. The 'answer_auxiliary' field carries the
          * original complete record set, including RRSIG and friends. We use this when passing data to
          * clients that ask for DNSSEC metadata. */
-        dns_answer_unref(t->answer);
-        t->answer = dns_answer_ref(p->answer);
+        DNS_ANSWER_REPLACE(t->answer, dns_answer_ref(p->answer));
         t->answer_rcode = DNS_PACKET_RCODE(p);
         t->answer_dnssec_result = _DNSSEC_RESULT_INVALID;
         SET_FLAG(t->answer_query_flags, SD_RESOLVED_AUTHENTICATED, false);
@@ -2213,7 +2208,7 @@ static int dns_transaction_negative_trust_anchor_lookup(DnsTransaction *t, const
         return link_negative_trust_anchor_lookup(t->scope->link, name);
 }
 
-static int dns_transaction_has_unsigned_negative_answer(DnsTransaction *t) {
+static int dns_transaction_has_negative_answer(DnsTransaction *t) {
         int r;
 
         assert(t);
@@ -2232,14 +2227,7 @@ static int dns_transaction_has_unsigned_negative_answer(DnsTransaction *t) {
         r = dns_transaction_negative_trust_anchor_lookup(t, dns_resource_key_name(dns_transaction_key(t)));
         if (r < 0)
                 return r;
-        if (r > 0)
-                return false;
-
-        /* The answer does not contain any RRs that match to the
-         * question. If so, let's see if there are any NSEC/NSEC3 RRs
-         * included. If not, the answer is unsigned. */
-
-        return !dns_answer_contains_nsec_or_nsec3(t->answer);
+        return !r;
 }
 
 static int dns_transaction_is_primary_response(DnsTransaction *t, DnsResourceRecord *rr) {
@@ -2563,14 +2551,15 @@ int dns_transaction_request_dnssec_keys(DnsTransaction *t) {
          * we got. Now, let's request what we need to validate what we
          * didn't get... */
 
-        r = dns_transaction_has_unsigned_negative_answer(t);
+        r = dns_transaction_has_negative_answer(t);
         if (r < 0)
                 return r;
         if (r > 0) {
-                const char *name;
+                const char *name, *signed_status;
                 uint16_t type = 0;
 
                 name = dns_resource_key_name(dns_transaction_key(t));
+                signed_status = dns_answer_contains_nsec_or_nsec3(t->answer) ? "signed" : "unsigned";
 
                 /* If this was a SOA or NS request, then check if there's a DS RR for the same domain. Note that this
                  * could also be used as indication that we are not at a zone apex, but in real world setups there are
@@ -2583,21 +2572,21 @@ int dns_transaction_request_dnssec_keys(DnsTransaction *t) {
                         r = dns_name_parent(&name);
                         if (r > 0) {
                                 type = DNS_TYPE_SOA;
-                                log_debug("Requesting parent SOA (→ %s) to validate transaction %" PRIu16 " (%s, unsigned empty DS response).",
-                                          name, t->id, dns_resource_key_name(dns_transaction_key(t)));
+                                log_debug("Requesting parent SOA (→ %s) to validate transaction %" PRIu16 " (%s, %s empty DS response).",
+                                          name, t->id, dns_resource_key_name(dns_transaction_key(t)), signed_status);
                         } else
                                 name = NULL;
 
                 } else if (IN_SET(dns_transaction_key(t)->type, DNS_TYPE_SOA, DNS_TYPE_NS)) {
 
                         type = DNS_TYPE_DS;
-                        log_debug("Requesting DS (→ %s) to validate transaction %" PRIu16 " (%s, unsigned empty SOA/NS response).",
-                                  name, t->id, name);
+                        log_debug("Requesting DS (→ %s) to validate transaction %" PRIu16 " (%s, %s empty SOA/NS response).",
+                                  name, t->id, name, signed_status);
 
                 } else {
                         type = DNS_TYPE_SOA;
-                        log_debug("Requesting SOA (→ %s) to validate transaction %" PRIu16 " (%s, unsigned empty non-SOA/NS/DS response).",
-                                  name, t->id, name);
+                        log_debug("Requesting SOA (→ %s) to validate transaction %" PRIu16 " (%s, %s empty non-SOA/NS/DS response).",
+                                  name, t->id, name, signed_status);
                 }
 
                 if (name) {
@@ -3105,6 +3094,7 @@ static int dnssec_validate_records(
         /* Returns negative on error, 0 if validation failed, 1 to restart validation, 2 when finished. */
 
         DNS_ANSWER_FOREACH(rr, t->answer) {
+                _unused_ _cleanup_(dns_resource_record_unrefp) DnsResourceRecord *rr_ref = dns_resource_record_ref(rr);
                 DnsResourceRecord *rrsig = NULL;
                 DnssecResult result;
 
@@ -3451,8 +3441,7 @@ int dns_transaction_validate_dnssec(DnsTransaction *t) {
                 break;
         }
 
-        dns_answer_unref(t->answer);
-        t->answer = TAKE_PTR(validated);
+        DNS_ANSWER_REPLACE(t->answer, TAKE_PTR(validated));
 
         /* At this point the answer only contains validated
          * RRsets. Now, let's see if it actually answers the question

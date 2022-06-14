@@ -372,12 +372,11 @@ static int strv_pair_to_json(char **l, JsonVariant **ret) {
 static void strv_pair_print(char **l, const char *prefix) {
         assert(prefix);
 
-        STRV_FOREACH_PAIR(p, q, l) {
+        STRV_FOREACH_PAIR(p, q, l)
                 if (p == l)
                         printf("%s %s=%s\n", prefix, *p, *q);
                 else
                         printf("%*s %s=%s\n", (int) strlen(prefix), "", *p, *q);
-        }
 }
 
 static int get_sysext_scopes(DissectedImage *m, char ***ret_scopes) {
@@ -639,12 +638,17 @@ static int action_mount(DissectedImage *m, LoopDevice *d) {
         if (r < 0)
                 return r;
 
+        r = loop_device_flock(d, LOCK_UN);
+        if (r < 0)
+                return log_error_errno(r, "Failed to unlock loopback block device: %m");
+
         if (di) {
                 r = decrypted_image_relinquish(di);
                 if (r < 0)
                         return log_error_errno(r, "Failed to relinquish DM devices: %m");
         }
 
+        dissected_image_relinquish(m);
         loop_device_relinquish(d);
         return 0;
 }
@@ -687,12 +691,17 @@ static int action_copy(DissectedImage *m, LoopDevice *d) {
 
         mounted_dir = TAKE_PTR(created_dir);
 
+        r = loop_device_flock(d, LOCK_UN);
+        if (r < 0)
+                return log_error_errno(r, "Failed to unlock loopback block device: %m");
+
         if (di) {
                 r = decrypted_image_relinquish(di);
                 if (r < 0)
                         return log_error_errno(r, "Failed to relinquish DM devices: %m");
         }
 
+        dissected_image_relinquish(m);
         loop_device_relinquish(d);
 
         if (arg_action == ACTION_COPY_FROM) {
@@ -844,6 +853,12 @@ static int run(int argc, char *argv[]) {
                         &d);
         if (r < 0)
                 return log_error_errno(r, "Failed to set up loopback device for %s: %m", arg_image);
+
+        /* Make sure udevd doesn't issue BLKRRPART underneath us thus making devices disappear in the middle,
+         * that we assume already are there. */
+        r = loop_device_flock(d, LOCK_SH);
+        if (r < 0)
+                return log_error_errno(r, "Failed to lock loopback device: %m");
 
         r = dissect_image_and_warn(
                         d->fd,

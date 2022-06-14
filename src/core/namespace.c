@@ -12,6 +12,7 @@
 #include "base-filesystem.h"
 #include "chase-symlinks.h"
 #include "dev-setup.h"
+#include "devnum-util.h"
 #include "env-util.h"
 #include "escape.h"
 #include "extension-release.h"
@@ -885,10 +886,10 @@ add_symlink:
                 return 0;
 
         /* Create symlinks like /dev/char/1:9 → ../urandom */
-        if (asprintf(&sl, "%s/dev/%s/%u:%u",
+        if (asprintf(&sl, "%s/dev/%s/" DEVNUM_FORMAT_STR,
                      temporary_mount,
                      S_ISCHR(st.st_mode) ? "char" : "block",
-                     major(st.st_rdev), minor(st.st_rdev)) < 0)
+                     DEVNUM_FORMAT_VAL(st.st_rdev)) < 0)
                 return log_oom();
 
         (void) mkdir_parents(sl, 0755);
@@ -2055,6 +2056,12 @@ int setup_namespace(
                 if (r < 0)
                         return log_debug_errno(r, "Failed to create loop device for root image: %m");
 
+                /* Make sure udevd won't issue BLKRRPART (which might flush out the loaded partition table)
+                 * while we are still trying to mount things */
+                r = loop_device_flock(loop_device, LOCK_SH);
+                if (r < 0)
+                        return log_debug_errno(r, "Failed to lock loopback device with LOCK_SH: %m");
+
                 r = dissect_image(
                                 loop_device->fd,
                                 &verity,
@@ -2403,6 +2410,14 @@ int setup_namespace(
                         goto finish;
                 }
 
+                /* Now release the block device lock, so that udevd is free to call BLKRRPART on the device
+                 * if it likes. */
+                r = loop_device_flock(loop_device, LOCK_UN);
+                if (r < 0) {
+                        log_debug_errno(r, "Failed to release lock on loopback block device: %m");
+                        goto finish;
+                }
+
                 if (decrypted_image) {
                         r = decrypted_image_relinquish(decrypted_image);
                         if (r < 0) {
@@ -2411,6 +2426,7 @@ int setup_namespace(
                         }
                 }
 
+                dissected_image_relinquish(dissected_image);
                 loop_device_relinquish(loop_device);
 
         } else if (root_directory) {

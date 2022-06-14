@@ -247,8 +247,8 @@ shared_sources = files(
         'parse-argument.h',
         'parse-helpers.c',
         'parse-helpers.h',
-        'pcre2-dlopen.c',
-        'pcre2-dlopen.h',
+        'pcre2-util.c',
+        'pcre2-util.h',
         'pe-header.h',
         'pkcs11-util.c',
         'pkcs11-util.h',
@@ -266,6 +266,8 @@ shared_sources = files(
         'quota-util.h',
         'reboot-util.c',
         'reboot-util.h',
+        'recovery-key.c',
+        'recovery-key.h',
         'resize-fs.c',
         'resize-fs.h',
         'resolve-util.c',
@@ -483,4 +485,4 @@ libshared = shared_library(
                       libsystemd_static],
         dependencies : libshared_deps,
         install : true,
-        install_dir : rootlibexecdir)
+        install_dir : rootpkglibdir)

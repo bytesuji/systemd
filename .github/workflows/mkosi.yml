@@ -24,7 +24,7 @@ env:
 
 jobs:
   ci:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     concurrency:
       group: ${{ github.workflow }}-${{ matrix.distro }}-${{ matrix.release }}-${{ github.ref }}
       cancel-in-progress: true
@@ -37,9 +37,9 @@ jobs:
           - distro: debian
             release: testing
           - distro: ubuntu
-            release: focal
+            release: jammy
           - distro: fedora
-            release: "35"
+            release: "36"
           - distro: opensuse
             release: tumbleweed
           - distro: centos_epel
@@ -48,8 +48,8 @@ jobs:
             release: 9-stream
 
     steps:
-    - uses: actions/checkout@a12a3943b4bdde767164f792f33f40b04645d846
-    - uses: systemd/mkosi@0dd39c20a4b3a2fab6efdc54da92bffad7c7b7ca
+    - uses: actions/checkout@2541b1294d2704b0964813337f33b291d3f8596b
+    - uses: systemd/mkosi@93098e2406e12ea7f06f962d4808952b8a06d345
 
     - name: Install
       run: sudo apt-get update && sudo apt-get install --no-install-recommends python3-pexpect python3-jinja2

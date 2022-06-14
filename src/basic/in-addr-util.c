@@ -14,6 +14,7 @@
 #include "macro.h"
 #include "parse-util.h"
 #include "random-util.h"
+#include "stdio-util.h"
 #include "string-util.h"
 #include "strxcpyx.h"
 #include "util.h"
@@ -444,44 +445,33 @@ int in_addr_to_string(int family, const union in_addr_union *u, char **ret) {
                 return -ENOMEM;
 
         errno = 0;
-        if (!inet_ntop(family, u, x, l))
+        if (!typesafe_inet_ntop(family, u, x, l))
                 return errno_or_else(EINVAL);
 
         *ret = TAKE_PTR(x);
         return 0;
 }
 
-int in_addr_prefix_to_string(int family, const union in_addr_union *u, unsigned prefixlen, char **ret) {
-        _cleanup_free_ char *x = NULL;
-        char *p;
-        size_t l;
+int in_addr_prefix_to_string(
+                int family,
+                const union in_addr_union *u,
+                unsigned prefixlen,
+                char *buf,
+                size_t buf_len) {
 
         assert(u);
-        assert(ret);
+        assert(buf);
 
-        if (family == AF_INET)
-                l = INET_ADDRSTRLEN + 3;
-        else if (family == AF_INET6)
-                l = INET6_ADDRSTRLEN + 4;
-        else
+        if (!IN_SET(family, AF_INET, AF_INET6))
                 return -EAFNOSUPPORT;
 
-        if (prefixlen > FAMILY_ADDRESS_SIZE(family) * 8)
-                return -EINVAL;
-
-        x = new(char, l);
-        if (!x)
-                return -ENOMEM;
-
         errno = 0;
-        if (!inet_ntop(family, u, x, l))
-                return errno_or_else(EINVAL);
+        if (!typesafe_inet_ntop(family, u, buf, buf_len))
+                return errno_or_else(ENOSPC);
 
-        p = x + strlen(x);
-        l -= strlen(x);
-        (void) strpcpyf(&p, l, "/%u", prefixlen);
-
-        *ret = TAKE_PTR(x);
+        size_t l = strlen(buf);
+        if (!snprintf_ok(buf + l, buf_len - l, "/%u", prefixlen))
+                return -ENOSPC;
         return 0;
 }
 
@@ -593,6 +583,45 @@ struct in_addr* in4_addr_prefixlen_to_netmask(struct in_addr *addr, unsigned cha
                 addr->s_addr = htobe32((0xffffffff << (32 - prefixlen)) & 0xffffffff);
 
         return addr;
+}
+
+struct in6_addr* in6_addr_prefixlen_to_netmask(struct in6_addr *addr, unsigned char prefixlen) {
+        assert(addr);
+        assert(prefixlen <= 128);
+
+        for (unsigned int i = 0; i < 16; i++) {
+                uint8_t mask;
+
+                if (prefixlen >= 8) {
+                        mask = 0xFF;
+                        prefixlen -= 8;
+                } else if (prefixlen > 0) {
+                        mask = 0xFF << (8 - prefixlen);
+                        prefixlen = 0;
+                } else {
+                        assert(prefixlen == 0);
+                        mask = 0;
+                }
+
+                addr->s6_addr[i] = mask;
+        }
+
+        return addr;
+}
+
+int in_addr_prefixlen_to_netmask(int family, union in_addr_union *addr, unsigned char prefixlen) {
+        assert(addr);
+
+        switch (family) {
+        case AF_INET:
+                in4_addr_prefixlen_to_netmask(&addr->in, prefixlen);
+                return 0;
+        case AF_INET6:
+                in6_addr_prefixlen_to_netmask(&addr->in6, prefixlen);
+                return 0;
+        default:
+                return -EAFNOSUPPORT;
+        }
 }
 
 int in4_addr_default_prefixlen(const struct in_addr *addr, unsigned char *prefixlen) {

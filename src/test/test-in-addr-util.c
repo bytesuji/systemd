@@ -86,28 +86,27 @@ TEST(in_addr_prefix_from_string) {
 }
 
 static void test_in_addr_prefix_to_string_valid(int family, const char *p) {
-        _cleanup_free_ char *str = NULL;
         union in_addr_union u;
         unsigned char l;
 
         log_info("%s: %s", __func__, p);
 
         assert_se(in_addr_prefix_from_string(p, family, &u, &l) >= 0);
-        assert_se(in_addr_prefix_to_string(family, &u, l, &str) >= 0);
-        assert_se(streq(str, p));
+        assert_se(streq(p, IN_ADDR_PREFIX_TO_STRING(family, &u, l)));
 }
 
 static void test_in_addr_prefix_to_string_unoptimized(int family, const char *p) {
-        _cleanup_free_ char *str1 = NULL, *str2 = NULL;
         union in_addr_union u1, u2;
         unsigned char len1, len2;
 
         log_info("%s: %s", __func__, p);
 
         assert_se(in_addr_prefix_from_string(p, family, &u1, &len1) >= 0);
-        assert_se(in_addr_prefix_to_string(family, &u1, len1, &str1) >= 0);
+        const char *str1 = IN_ADDR_PREFIX_TO_STRING(family, &u1, len1);
+        assert_se(str1);
         assert_se(in_addr_prefix_from_string(str1, family, &u2, &len2) >= 0);
-        assert_se(in_addr_prefix_to_string(family, &u2, len2, &str2) >= 0);
+        const char *str2 = IN_ADDR_PREFIX_TO_STRING(family, &u2, len2);
+        assert_se(str2);
 
         assert_se(streq(str1, str2));
         assert_se(len1 == len2);
@@ -347,12 +346,14 @@ TEST(in_addr_prefix_range) {
 
 static void test_in_addr_to_string_one(int f, const char *addr) {
         union in_addr_union ua;
-        _cleanup_free_ char *r = NULL;
+        _cleanup_free_ char *r;
 
         assert_se(in_addr_from_string(f, addr, &ua) >= 0);
         assert_se(in_addr_to_string(f, &ua, &r) >= 0);
-        printf("test_in_addr_to_string_one: %s == %s\n", addr, r);
+        printf("%s: %s == %s\n", __func__, addr, r);
         assert_se(streq(addr, r));
+
+        assert_se(streq(r, IN_ADDR_TO_STRING(f, &ua)));
 }
 
 TEST(in_addr_to_string) {
@@ -361,6 +362,37 @@ TEST(in_addr_to_string) {
         test_in_addr_to_string_one(AF_INET6, "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff");
         test_in_addr_to_string_one(AF_INET6, "::1");
         test_in_addr_to_string_one(AF_INET6, "fe80::");
+}
+
+TEST(in_addr_prefixlen_to_netmask) {
+        union in_addr_union addr;
+        static const char *const ipv4_netmasks[] = {
+                "0.0.0.0", "128.0.0.0", "192.0.0.0", "224.0.0.0", "240.0.0.0",
+                "248.0.0.0", "252.0.0.0", "254.0.0.0", "255.0.0.0",
+                "255.128.0.0", "255.192.0.0", "255.224.0.0", "255.240.0.0",
+                "255.248.0.0", "255.252.0.0", "255.254.0.0", "255.255.0.0",
+                "255.255.128.0", "255.255.192.0", "255.255.224.0", "255.255.240.0",
+                "255.255.248.0", "255.255.252.0", "255.255.254.0", "255.255.255.0",
+                "255.255.255.128", "255.255.255.192", "255.255.255.224", "255.255.255.240",
+                "255.255.255.248", "255.255.255.252", "255.255.255.254", "255.255.255.255",
+        };
+
+        for (unsigned char prefixlen = 0; prefixlen <= 32; prefixlen++) {
+                _cleanup_free_ char *r = NULL;
+
+                assert_se(in_addr_prefixlen_to_netmask(AF_INET, &addr, prefixlen) >= 0);
+                assert_se(in_addr_to_string(AF_INET, &addr, &r) >= 0);
+                printf("test_in_addr_prefixlen_to_netmask: %s == %s\n", ipv4_netmasks[prefixlen], r);
+                assert_se(streq(ipv4_netmasks[prefixlen], r));
+        }
+
+        for (unsigned char prefixlen = 0; prefixlen <= 128; prefixlen++) {
+                _cleanup_free_ char *r = NULL;
+
+                assert_se(in_addr_prefixlen_to_netmask(AF_INET6, &addr, prefixlen) >= 0);
+                assert_se(in_addr_to_string(AF_INET6, &addr, &r) >= 0);
+                printf("test_in_addr_prefixlen_to_netmask: %s\n", r);
+        }
 }
 
 DEFINE_TEST_MAIN(LOG_DEBUG);

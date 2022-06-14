@@ -26,13 +26,13 @@ static EFI_STATUS acquire_rng(UINTN size, void **ret) {
 
         /* Try to acquire the specified number of bytes from the UEFI RNG */
 
-        err = LibLocateProtocol((EFI_GUID*) EFI_RNG_GUID, (void**) &rng);
+        err = BS->LocateProtocol((EFI_GUID *) EFI_RNG_GUID, NULL, (void **) &rng);
         if (EFI_ERROR(err))
                 return err;
         if (!rng)
                 return EFI_UNSUPPORTED;
 
-        data = xallocate_pool(size);
+        data = xmalloc(size);
 
         err = rng->GetRNG(rng, NULL, size, data);
         if (EFI_ERROR(err))
@@ -48,6 +48,7 @@ static void hash_once(
                 UINTN size,
                 const void *system_token,
                 UINTN system_token_size,
+                UINT64 uefi_monotonic_counter,
                 UINTN counter,
                 UINT8 ret[static HASH_VALUE_SIZE]) {
 
@@ -56,7 +57,8 @@ static void hash_once(
          *      1. The contents of the old seed file
          *      2. Some random data acquired from the UEFI RNG (optional)
          *      3. Some 'system token' the installer installed as EFI variable (optional)
-         *      4. A counter value
+         *      4. The UEFI "monotonic counter" that increases with each boot
+         *      5. A supplied counter value
          *
          * And writes the result to the specified buffer.
          */
@@ -72,6 +74,7 @@ static void hash_once(
                 sha256_process_bytes(rng, size, &hash);
         if (system_token_size > 0)
                 sha256_process_bytes(system_token, system_token_size, &hash);
+        sha256_process_bytes(&uefi_monotonic_counter, sizeof(uefi_monotonic_counter), &hash);
         sha256_process_bytes(&counter, sizeof(counter), &hash);
         sha256_finish_ctx(&hash, ret);
 }
@@ -82,6 +85,7 @@ static EFI_STATUS hash_many(
                 UINTN size,
                 const void *system_token,
                 UINTN system_token_size,
+                UINT64 uefi_monotonic_counter,
                 UINTN counter_start,
                 UINTN n,
                 void **ret) {
@@ -95,11 +99,12 @@ static EFI_STATUS hash_many(
         /* Hashes the specified parameters in counter mode, generating n hash values, with the counter in the
          * range counter_start…counter_start+n-1. */
 
-        output = xallocate_pool(n * HASH_VALUE_SIZE);
+        output = xmalloc_multiply(HASH_VALUE_SIZE, n);
 
         for (UINTN i = 0; i < n; i++)
                 hash_once(old_seed, rng, size,
                           system_token, system_token_size,
+                          uefi_monotonic_counter,
                           counter_start + i,
                           (UINT8*) output + (i * HASH_VALUE_SIZE));
 
@@ -113,6 +118,7 @@ static EFI_STATUS mangle_random_seed(
                 UINTN size,
                 const void *system_token,
                 UINTN system_token_size,
+                UINT64 uefi_monotonic_counter,
                 void **ret_new_seed,
                 void **ret_for_kernel) {
 
@@ -134,12 +140,12 @@ static EFI_STATUS mangle_random_seed(
         n = (size + HASH_VALUE_SIZE - 1) / HASH_VALUE_SIZE;
 
         /* Begin hashing in counter mode at counter 0 for the new seed for the disk */
-        err = hash_many(old_seed, rng, size, system_token, system_token_size, 0, n, &new_seed);
+        err = hash_many(old_seed, rng, size, system_token, system_token_size, uefi_monotonic_counter, 0, n, &new_seed);
         if (EFI_ERROR(err))
                 return err;
 
         /* Continue counting at 'n' for the seed for the kernel */
-        err = hash_many(old_seed, rng, size, system_token, system_token_size, n, n, &for_kernel);
+        err = hash_many(old_seed, rng, size, system_token, system_token_size, uefi_monotonic_counter, n, n, &for_kernel);
         if (EFI_ERROR(err))
                 return err;
 
@@ -214,10 +220,10 @@ static void validate_sha256(void) {
                 uint8_t result[HASH_VALUE_SIZE];
 
                 sha256_init_ctx(&hash);
-                sha256_process_bytes(array[i].string, strlena((const CHAR8*) array[i].string), &hash);
+                sha256_process_bytes(array[i].string, strlen8(array[i].string), &hash);
                 sha256_finish_ctx(&hash, result);
 
-                assert(CompareMem(result, array[i].hash, HASH_VALUE_SIZE) == 0);
+                assert(memcmp(result, array[i].hash, HASH_VALUE_SIZE) == 0);
         }
 
 #endif
@@ -228,6 +234,7 @@ EFI_STATUS process_random_seed(EFI_FILE *root_dir, RandomSeedMode mode) {
         _cleanup_(file_closep) EFI_FILE *handle = NULL;
         UINTN size, rsize, wsize, system_token_size = 0;
         _cleanup_freepool_ EFI_FILE_INFO *info = NULL;
+        UINT64 uefi_monotonic_counter = 0;
         EFI_STATUS err;
 
         assert(root_dir);
@@ -267,7 +274,7 @@ EFI_STATUS process_random_seed(EFI_FILE *root_dir, RandomSeedMode mode) {
         if (size > RANDOM_MAX_SIZE_MAX)
                 return log_error_status_stall(EFI_INVALID_PARAMETER, L"Random seed file is too large.");
 
-        seed = xallocate_pool(size);
+        seed = xmalloc(size);
 
         rsize = size;
         err = handle->Read(handle, &rsize, seed);
@@ -285,8 +292,15 @@ EFI_STATUS process_random_seed(EFI_FILE *root_dir, RandomSeedMode mode) {
          * golden master images that are replicated many times. */
         (void) acquire_rng(size, &rng); /* It's fine if this fails */
 
+        /* Let's also include the UEFI monotonic counter (which is supposedly increasing on every single
+         * boot) in the hash, so that even if the changes to the ESP for some reason should not be
+         * persistent, the random seed we generate will still be different on every single boot. */
+        err = BS->GetNextMonotonicCount(&uefi_monotonic_counter);
+        if (EFI_ERROR(err))
+                return log_error_status_stall(err, L"Failed to acquire UEFI monotonic counter: %r", err);
+
         /* Calculate new random seed for the disk and what to pass to the kernel */
-        err = mangle_random_seed(seed, rng, size, system_token, system_token_size, &new_seed, &for_kernel);
+        err = mangle_random_seed(seed, rng, size, system_token, system_token_size, uefi_monotonic_counter, &new_seed, &for_kernel);
         if (EFI_ERROR(err))
                 return err;
 

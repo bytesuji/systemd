@@ -1025,6 +1025,14 @@ Condition *unit_find_failed_condition(Unit *u);
 #define log_unit_warning_errno(unit, error, ...) log_unit_full_errno(unit, LOG_WARNING, error, __VA_ARGS__)
 #define log_unit_error_errno(unit, error, ...)   log_unit_full_errno(unit, LOG_ERR, error, __VA_ARGS__)
 
+#if LOG_TRACE
+#  define log_unit_trace(...)          log_unit_debug(__VA_ARGS__)
+#  define log_unit_trace_errno(...)    log_unit_debug_errno(__VA_ARGS__)
+#else
+#  define log_unit_trace(...)          do {} while (0)
+#  define log_unit_trace_errno(e, ...) (-ERRNO_VALUE(e))
+#endif
+
 #define log_unit_struct_errno(unit, level, error, ...)                  \
         ({                                                              \
                 const Unit *_u = (unit);                                \
@@ -1046,7 +1054,8 @@ Condition *unit_find_failed_condition(Unit *u);
 
 #define log_unit_struct_iovec(unit, level, iovec, n_iovec) log_unit_struct_iovec_errno(unit, level, 0, iovec, n_iovec)
 
-#define LOG_UNIT_MESSAGE(unit, fmt, ...) "MESSAGE=%s: " fmt, (unit)->id, ##__VA_ARGS__
+/* Like LOG_MESSAGE(), but with the unit name prefixed. */
+#define LOG_UNIT_MESSAGE(unit, fmt, ...) LOG_MESSAGE("%s: " fmt, (unit)->id, ##__VA_ARGS__)
 #define LOG_UNIT_ID(unit) (unit)->manager->unit_log_format_string, (unit)->id
 #define LOG_UNIT_INVOCATION_ID(unit) (unit)->manager->invocation_log_format_string, (unit)->invocation_id_string
 

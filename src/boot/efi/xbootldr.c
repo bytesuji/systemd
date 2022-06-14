@@ -17,12 +17,28 @@ static EFI_DEVICE_PATH *path_chop(EFI_DEVICE_PATH *path, EFI_DEVICE_PATH *node) 
         assert(node);
 
         UINTN len = (UINT8 *) node - (UINT8 *) path;
-        EFI_DEVICE_PATH *chopped = xallocate_pool(len + END_DEVICE_PATH_LENGTH);
+        EFI_DEVICE_PATH *chopped = xmalloc(len + END_DEVICE_PATH_LENGTH);
 
-        CopyMem(chopped, path, len);
+        memcpy(chopped, path, len);
         SetDevicePathEndNode((EFI_DEVICE_PATH *) ((UINT8 *) chopped + len));
 
         return chopped;
+}
+
+static EFI_DEVICE_PATH *path_dup(const EFI_DEVICE_PATH *dp) {
+        assert(dp);
+
+        const EFI_DEVICE_PATH *node = dp;
+        size_t size = 0;
+        while (!IsDevicePathEnd(node)) {
+                size += DevicePathNodeLength(node);
+                node = NextDevicePathNode(node);
+        }
+        size += DevicePathNodeLength(node);
+
+        EFI_DEVICE_PATH *dup = xmalloc(size);
+        memcpy(dup, dp, size);
+        return dup;
 }
 
 static BOOLEAN verify_gpt(union GptHeaderBuffer *gpt_header_buffer, EFI_LBA lba_expected) {
@@ -35,7 +51,7 @@ static BOOLEAN verify_gpt(union GptHeaderBuffer *gpt_header_buffer, EFI_LBA lba_
         h = &gpt_header_buffer->gpt_header;
 
         /* Some superficial validation of the GPT header */
-        if (CompareMem(&h->Header.Signature, "EFI PART", sizeof(h->Header.Signature) != 0))
+        if (memcmp(&h->Header.Signature, "EFI PART", sizeof(h->Header.Signature)) != 0)
                 return FALSE;
 
         if (h->Header.HeaderSize < 92 || h->Header.HeaderSize > 512)
@@ -101,7 +117,7 @@ static EFI_STATUS try_gpt(
 
         /* Now load the GPT entry table */
         size = ALIGN_TO((UINTN) gpt.gpt_header.SizeOfPartitionEntry * (UINTN) gpt.gpt_header.NumberOfPartitionEntries, 512);
-        entries = xallocate_pool(size);
+        entries = xmalloc(size);
 
         err = block_io->ReadBlocks(
                         block_io,
@@ -123,12 +139,12 @@ static EFI_STATUS try_gpt(
 
                 entry = (EFI_PARTITION_ENTRY*) ((UINT8*) entries + gpt.gpt_header.SizeOfPartitionEntry * i);
 
-                if (CompareMem(&entry->PartitionTypeGUID, XBOOTLDR_GUID, sizeof(entry->PartitionTypeGUID)) != 0)
+                if (memcmp(&entry->PartitionTypeGUID, XBOOTLDR_GUID, sizeof(entry->PartitionTypeGUID)) != 0)
                         continue;
 
                 /* Let's use memcpy(), in case the structs are not aligned (they really should be though) */
-                CopyMem(&start, &entry->StartingLBA, sizeof(start));
-                CopyMem(&end, &entry->EndingLBA, sizeof(end));
+                memcpy(&start, &entry->StartingLBA, sizeof(start));
+                memcpy(&end, &entry->EndingLBA, sizeof(end));
 
                 if (end < start) /* Bogus? */
                         continue;
@@ -138,7 +154,7 @@ static EFI_STATUS try_gpt(
                 ret_hd->PartitionSize = end - start + 1;
                 ret_hd->MBRType = MBR_TYPE_EFI_PARTITION_TABLE_HEADER;
                 ret_hd->SignatureType = SIGNATURE_TYPE_GUID;
-                CopyMem(ret_hd->Signature, &entry->UniquePartitionGUID, sizeof(ret_hd->Signature));
+                memcpy(ret_hd->Signature, &entry->UniquePartitionGUID, sizeof(ret_hd->Signature));
 
                 return EFI_SUCCESS;
         }
@@ -154,9 +170,10 @@ static EFI_STATUS find_device(EFI_HANDLE *device, EFI_DEVICE_PATH **ret_device_p
         assert(device);
         assert(ret_device_path);
 
-        EFI_DEVICE_PATH *partition_path = DevicePathFromHandle(device);
-        if (!partition_path)
-                return EFI_NOT_FOUND;
+        EFI_DEVICE_PATH *partition_path;
+        err = BS->HandleProtocol(device, &DevicePathProtocol, (void **) &partition_path);
+        if (err != EFI_SUCCESS)
+                return err;
 
         /* Find the (last) partition node itself. */
         EFI_DEVICE_PATH *part_node = NULL;
@@ -226,8 +243,8 @@ static EFI_STATUS find_device(EFI_HANDLE *device, EFI_DEVICE_PATH **ret_device_p
                 }
 
                 /* Patch in the data we found */
-                EFI_DEVICE_PATH *xboot_path = ASSERT_SE_PTR(DuplicateDevicePath(partition_path));
-                CopyMem((UINT8 *) xboot_path + ((UINT8 *) part_node - (UINT8 *) partition_path), &hd, sizeof(hd));
+                EFI_DEVICE_PATH *xboot_path = path_dup(partition_path);
+                memcpy((UINT8 *) xboot_path + ((UINT8 *) part_node - (UINT8 *) partition_path), &hd, sizeof(hd));
                 *ret_device_path = xboot_path;
                 return EFI_SUCCESS;
         }
@@ -247,17 +264,17 @@ EFI_STATUS xbootldr_open(EFI_HANDLE *device, EFI_HANDLE *ret_device, EFI_FILE **
         assert(ret_root_dir);
 
         err = find_device(device, &partition_path);
-        if (EFI_ERROR(err))
+        if (err != EFI_SUCCESS)
                 return err;
 
         EFI_DEVICE_PATH *dp = partition_path;
         err = BS->LocateDevicePath(&BlockIoProtocol, &dp, &new_device);
-        if (EFI_ERROR(err))
+        if (err != EFI_SUCCESS)
                 return err;
 
-        root_dir = LibOpenRoot(new_device);
-        if (!root_dir)
-                return EFI_NOT_FOUND;
+        err = open_volume(new_device, &root_dir);
+        if (err != EFI_SUCCESS)
+                return err;
 
         *ret_device = new_device;
         *ret_root_dir = root_dir;

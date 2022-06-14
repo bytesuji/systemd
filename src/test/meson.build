@@ -172,6 +172,16 @@ tests += [
 
         [files('test-recurse-dir.c')],
 
+        [files('test-compress.c'),
+         [libshared,
+          libbasic_compress]],
+
+        [files('test-compress-benchmark.c'),
+         [libshared,
+          libbasic_compress],
+         [],
+         [], '', 'timeout=90'],
+
         [files('test-data-fd-util.c')],
 
         [files('test-static-destruct.c')],
@@ -201,7 +211,9 @@ tests += [
 
         [files('test-mkdir.c')],
 
-        [files('test-json.c')],
+        [files('test-json.c'),
+         [],
+         [libm]],
 
         [files('test-modhex.c')],
 
@@ -244,6 +256,8 @@ tests += [
 
         [files('test-stat-util.c')],
 
+        [files('test-devnum-util.c')],
+
         [files('test-os-util.c')],
 
         [files('test-libcrypt-util.c'),
@@ -263,7 +277,9 @@ tests += [
 
         [files('test-parse-helpers.c')],
 
-        [files('test-parse-util.c')],
+        [files('test-parse-util.c'),
+         [],
+         [libm]],
 
         [files('test-sysctl-util.c')],
 
@@ -466,6 +482,10 @@ tests += [
 
         [files('test-date.c')],
 
+        [files('test-sbat.c'),
+         [], [], [], 'HAVE_GNU_EFI', '',
+         ['-I@0@'.format(efi_config_h_dir)]],
+
         [files('test-sleep.c')],
 
         [files('test-tpm2.c')],
@@ -594,6 +614,8 @@ tests += [
 
         [files('test-journal-importer.c')],
 
+        [files('test-utmp.c')],
+
         [files('test-udev.c'),
          [libudevd_core,
           libshared],
@@ -648,6 +670,11 @@ tests += [
          [], [], [], 'ENABLE_NSCD', 'manual'],
 
         [files('test-hmac.c')],
+
+        [files('test-sha256.c')],
+
+        [files('test-nft-set.c'),
+         [], [], [], '', 'manual'],
 ]
 
 ############################################################
